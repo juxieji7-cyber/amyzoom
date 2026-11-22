@@ -85,13 +85,25 @@
 
 @keyframes heatMirageWave {
   0%, 100% {
-    transform: translate3d(0, 0, 0) skewX(0deg);
+    transform: translate3d(0, 0, 0) skewX(0deg) scaleY(1);
   }
   33% {
-    transform: translate3d(3px, -2px, 0) skewX(0.7deg);
+    transform: translate3d(4px, -2px, 0) skewX(1.15deg) scaleY(1.018);
   }
   66% {
-    transform: translate3d(-3px, 1px, 0) skewX(-0.7deg);
+    transform: translate3d(-4px, 1px, 0) skewX(-1.15deg) scaleY(0.985);
+  }
+}
+
+@keyframes heatMirageWaveReverse {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) skewX(0deg) scaleX(1);
+  }
+  40% {
+    transform: translate3d(-5px, -3px, 0) skewX(-1.35deg) scaleX(1.015);
+  }
+  75% {
+    transform: translate3d(4px, 2px, 0) skewX(1.05deg) scaleX(0.99);
   }
 }
 
@@ -140,7 +152,16 @@
 }
 
 .animate-heat-mirage {
-  animation: heatMirageWave 2.6s ease-in-out infinite;
+  animation: heatMirageWave 2.4s ease-in-out infinite;
+}
+
+.animate-heat-mirage-reverse {
+  animation: heatMirageWaveReverse 3.1s ease-in-out infinite;
+}
+
+.heat-mirage-refraction {
+  backdrop-filter: blur(0.65px) contrast(1.04) saturate(1.08);
+  -webkit-backdrop-filter: blur(0.65px) contrast(1.04) saturate(1.08);
 }
 
 .animate-breezy-drift {
@@ -167,6 +188,7 @@
   .animate-rain-droplets-slow,
   .animate-heat-shimmer,
   .animate-heat-mirage,
+  .animate-heat-mirage-reverse,
   .animate-breezy-drift,
   .animate-sun-breathe {
     animation: none;
@@ -178,3 +200,17 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+

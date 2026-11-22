@@ -27,7 +27,9 @@ import {
   CloudLightning,
   Save,
   BookOpen,
+  Timer,
 } from 'lucide-react';
+import { formatPomodoroTime, PomodoroMode } from './PomodoroPanel';
 import { SEASONAL_EVENTS, WEATHERS } from '../data/zooCatalog';
 import { SeasonalEventId, WeatherType } from '../types/zoo';
 import { AmbientAudioMode, BGM_TRACKS, BgmTrackId } from '../utils/sound';
@@ -50,6 +52,10 @@ interface TopHudProps {
   rainMode: AmbientAudioMode;
   windMode: AmbientAudioMode;
   thunderMode: AmbientAudioMode;
+  pomodoroMode: PomodoroMode;
+  pomodoroRunning: boolean;
+  pomodoroSecondsLeft: number;
+  onOpenPomodoro: () => void;
   onChangeSpeed: (speed: 0 | 1 | 2) => void;
   onToggleMute: () => void;
   onToggleBgm: () => void;
@@ -80,6 +86,10 @@ export const TopHud: React.FC<TopHudProps> = ({
   rainMode,
   windMode,
   thunderMode,
+  pomodoroMode,
+  pomodoroRunning,
+  pomodoroSecondsLeft,
+  onOpenPomodoro,
   onChangeSpeed,
   onToggleMute,
   onToggleBgm,
@@ -148,22 +158,113 @@ export const TopHud: React.FC<TopHudProps> = ({
     }
   };
 
+  const pomodoroActiveColor =
+    pomodoroRunning
+      ? pomodoroMode === 'focus'
+        ? 'border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100'
+        : 'border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100'
+      : 'border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#1A2B20]';
+
   return (
-    <header className="w-full bg-white border-b border-[#E2DDD3] px-4 lg:px-6 py-2.5 flex items-center justify-between gap-4 shrink-0">
-      {/* Zone 1: Brand Title */}
-      <div className="flex items-center gap-4 shrink-0">
-        <span className="font-display text-lg font-bold tracking-tight text-[#1A2B20] whitespace-nowrap">
-          森之方舟動物園
-        </span>
+    <header className="w-full bg-white border-b border-[#E2DDD3] px-3 py-2 lg:px-6 lg:py-2.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 lg:gap-4 shrink-0">
+      {/* Row 1 on mobile / Zone 1+3 split cleanly */}
+      <div className="flex items-center justify-between gap-2 lg:contents">
+        {/* Zone 1: Brand Title */}
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
+          <span className="font-display text-base sm:text-lg font-bold tracking-tight text-[#1A2B20] whitespace-nowrap">
+            森之方舟動物園
+          </span>
+        </div>
+
+        {/* Mobile compact right actions (hidden on lg where full Zone 3 renders) */}
+        <div className="flex items-center gap-1.5 lg:hidden shrink-0">
+          <button
+            type="button"
+            onClick={onOpenPomodoro}
+            title="開啟番茄時鐘"
+            className={`min-h-[36px] px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1 whitespace-nowrap transition-colors cursor-pointer ${pomodoroActiveColor}`}
+          >
+            <Timer className="w-3.5 h-3.5 shrink-0" />
+            <span className="font-mono-num">
+              {pomodoroRunning ? formatPomodoroTime(pomodoroSecondsLeft) : '番茄鐘'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenSaveModal}
+            title="儲存或讀取園區存檔"
+            aria-label="儲存或讀取園區存檔"
+            className="min-h-[36px] min-w-[36px] px-2 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#1A2B20] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <Save className="w-4 h-4 text-emerald-700" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleMute}
+            title={muted ? '開啟全部聲音' : '全部靜音'}
+            aria-label={muted ? '開啟全部聲音' : '全部靜音'}
+            className="min-h-[36px] min-w-[36px] px-2 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#4A5D50] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={onReturnTitle}
+            title="返回主選單"
+            aria-label="返回主選單"
+            className="min-h-[36px] min-w-[36px] px-2 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#4A5D50] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Zone 2: Key Telemetry Metrics */}
-      <div className="flex items-center gap-4 lg:gap-6 overflow-x-auto py-0.5">
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0" title="園區可用資金">
-          <Coins className="w-4 h-4 text-amber-600" />
-          <span className="text-xs text-[#5B6D60]">資金</span>
+      {/* Zone 2: Key Telemetry Metrics (horizontal scroll on narrow mobile screens) */}
+      <div className="flex items-center gap-3 lg:gap-5 overflow-x-auto py-0.5 no-scrollbar">
+        {/* Mobile Speed Switcher inline at start of telemetry row */}
+        <div
+          className="flex lg:hidden items-center bg-[#F4F2EC] p-0.5 rounded-lg border border-[#E2DDD3] shrink-0"
+          role="group"
+          aria-label="模擬速度控制"
+        >
+          <button
+            type="button"
+            onClick={() => onChangeSpeed(0)}
+            aria-label="暫停模擬"
+            className={`px-2 py-1 rounded-md text-xs font-medium flex items-center transition-colors cursor-pointer ${
+              speed === 0 ? 'bg-white text-amber-700 shadow-xs' : 'text-[#5B6D60]'
+            }`}
+          >
+            <Pause className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeSpeed(1)}
+            className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              speed === 1 ? 'bg-white text-emerald-800 shadow-xs' : 'text-[#5B6D60]'
+            }`}
+          >
+            1x
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeSpeed(2)}
+            className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              speed === 2 ? 'bg-white text-emerald-800 shadow-xs' : 'text-[#5B6D60]'
+            }`}
+          >
+            2x
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0" title="園區可用資金">
+          <Coins className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-amber-600" />
+          <span className="text-xs text-[#5B6D60] hidden sm:inline">資金</span>
           <span
-            className={`font-mono-num text-sm font-bold ${
+            className={`font-mono-num text-xs sm:text-sm font-bold ${
               funds < 0 ? 'text-rose-600' : 'text-[#1A2B20]'
             }`}
           >
@@ -171,27 +272,28 @@ export const TopHud: React.FC<TopHudProps> = ({
           </span>
         </div>
 
-        <div className="h-4 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
+        <div className="h-3.5 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
 
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0" title="目前園內遊客數">
-          <Users className="w-4 h-4 text-sky-700" />
-          <span className="text-xs text-[#5B6D60]">遊客</span>
-          <span className="font-mono-num text-sm font-bold text-[#1A2B20]">{visitorCount}</span>
+        <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0" title="目前園內遊客數">
+          <Users className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-sky-700" />
+          <span className="text-xs text-[#5B6D60] hidden sm:inline">遊客</span>
+          <span className="font-mono-num text-xs sm:text-sm font-bold text-[#1A2B20]">{visitorCount}</span>
         </div>
 
-        <div className="h-4 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
+        <div className="h-3.5 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
 
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0" title="目標 4.8 星通關">
-          <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
-          <span className="text-xs text-[#5B6D60]">評價</span>
-          <span className="font-mono-num text-sm font-bold text-[#1A2B20]">
-            {rating.toFixed(1)} <span className="text-xs font-normal text-[#7A8A7E]">/ 5.0</span>
+        <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0" title="目標 4.8 星通關">
+          <Star className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-amber-500 fill-amber-400" />
+          <span className="text-xs text-[#5B6D60] hidden sm:inline">評價</span>
+          <span className="font-mono-num text-xs sm:text-sm font-bold text-[#1A2B20]">
+            {rating.toFixed(1)}
+            <span className="text-[11px] font-normal text-[#7A8A7E] hidden sm:inline"> / 5.0</span>
           </span>
         </div>
 
-        <div className="h-4 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
+        <div className="h-3.5 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
 
-        <div className="flex items-center gap-2 whitespace-nowrap shrink-0" title={weatherSpec.shortDesc}>
+        <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0" title={weatherSpec.shortDesc}>
           {renderWeatherIcon()}
           <span className="text-xs font-semibold text-[#1A2B20]">{weatherSpec.name}</span>
           <span className="font-mono-num text-[11px] text-[#6A7B6F]">
@@ -201,19 +303,19 @@ export const TopHud: React.FC<TopHudProps> = ({
 
         {seasonalSpec && (
           <>
-            <div className="h-4 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
+            <div className="h-3.5 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
             <div
               className="flex items-center gap-1.5 whitespace-nowrap shrink-0"
               title={seasonalSpec.shortDesc}
             >
               {seasonalSpec.id === 'spring_sakura' ? (
-                <Flower2 className="w-4 h-4 text-pink-500" />
+                <Flower2 className="w-3.5 h-3.5 text-pink-500" />
               ) : seasonalSpec.id === 'winter_snow' ? (
-                <Snowflake className="w-4 h-4 text-sky-500" />
+                <Snowflake className="w-3.5 h-3.5 text-sky-500" />
               ) : seasonalSpec.id === 'autumn_maple' ? (
-                <Leaf className="w-4 h-4 text-orange-600" />
+                <Leaf className="w-3.5 h-3.5 text-orange-600" />
               ) : (
-                <Sparkles className="w-4 h-4 text-amber-500" />
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               )}
               <span className="text-xs font-semibold text-[#1A2B20]">{seasonalSpec.name}</span>
               <span className="font-mono-num text-[11px] text-[#6A7B6F]">
@@ -223,11 +325,11 @@ export const TopHud: React.FC<TopHudProps> = ({
           </>
         )}
 
-        <div className="h-4 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
+        <div className="h-3.5 w-px bg-[#E2DDD3] shrink-0" aria-hidden="true" />
 
-        <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-          <Calendar className="w-4 h-4 text-emerald-700" />
-          <span className="font-mono-num text-sm font-semibold text-[#1A2B20]">第 {day} 天</span>
+        <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+          <Calendar className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-emerald-700" />
+          <span className="font-mono-num text-xs sm:text-sm font-semibold text-[#1A2B20]">第 {day} 天</span>
           <span
             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold ${
               isNight
@@ -254,10 +356,10 @@ export const TopHud: React.FC<TopHudProps> = ({
         </div>
       </div>
 
-      {/* Zone 3: Playback Speed & Audio Controls */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Zone 3: Playback Speed, Pomodoro & Audio Controls (desktop full bar + mobile music menu) */}
+      <div className="flex items-center justify-between lg:justify-end gap-2 shrink-0">
         <div
-          className="flex items-center bg-[#F4F2EC] p-0.5 rounded-lg border border-[#E2DDD3]"
+          className="hidden lg:flex items-center bg-[#F4F2EC] p-0.5 rounded-lg border border-[#E2DDD3]"
           role="group"
           aria-label="模擬速度控制"
         >
@@ -272,7 +374,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }`}
           >
             <Pause className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">暫停</span>
+            <span className="hidden xl:inline">暫停</span>
           </button>
           <button
             type="button"
@@ -304,9 +406,21 @@ export const TopHud: React.FC<TopHudProps> = ({
 
         <button
           type="button"
+          onClick={onOpenPomodoro}
+          title="開啟園區番茄時鐘（專注讀書 / 休息計時）"
+          className={`hidden lg:flex px-2.5 py-1.5 rounded-lg border text-xs font-semibold items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${pomodoroActiveColor}`}
+        >
+          <Timer className="w-3.5 h-3.5 shrink-0" />
+          <span className="font-mono-num">
+            {pomodoroRunning ? formatPomodoroTime(pomodoroSecondsLeft) : '番茄鐘'}
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={onEnterPhotoMode}
           title="隱藏介面並切換至第一人稱視角遊覽拍照"
-          className="px-3 py-1.5 rounded-lg border border-emerald-700/30 bg-[#059669] hover:bg-[#047857] text-xs font-semibold text-white flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+          className="hidden lg:flex px-3 py-1.5 rounded-lg border border-emerald-700/30 bg-[#059669] hover:bg-[#047857] text-xs font-semibold text-white items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
         >
           <Camera className="w-3.5 h-3.5" />
           <span>攝影模式</span>
@@ -316,27 +430,27 @@ export const TopHud: React.FC<TopHudProps> = ({
           type="button"
           onClick={onOpenSaveModal}
           title="儲存或讀取園區存檔"
-          className="px-2.5 py-1.5 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-xs font-semibold text-[#1A2B20] flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+          className="hidden lg:flex px-2.5 py-1.5 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-xs font-semibold text-[#1A2B20] items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
         >
           <Save className="w-3.5 h-3.5 text-emerald-700" />
-          <span className="hidden sm:inline">存檔</span>
+          <span>存檔</span>
         </button>
 
-        <div className="relative" ref={musicMenuRef}>
-          <div className="flex items-center rounded-lg border border-[#E2DDD3] bg-[#F4F2EC] overflow-hidden">
+        <div className="relative w-full lg:w-auto" ref={musicMenuRef}>
+          <div className="flex items-center rounded-lg border border-[#E2DDD3] bg-[#F4F2EC] overflow-hidden w-full lg:w-auto">
             <button
               type="button"
               onClick={onToggleBgm}
               title={bgmMuted ? '開啟背景音樂' : '靜音背景音樂'}
               aria-label={bgmMuted ? '開啟背景音樂' : '靜音背景音樂'}
-              className={`px-2.5 py-1.5 text-xs font-medium flex items-center gap-1 whitespace-nowrap transition-colors cursor-pointer ${
+              className={`min-h-[34px] lg:min-h-0 px-2.5 py-1.5 text-xs font-medium flex items-center gap-1 whitespace-nowrap transition-colors cursor-pointer ${
                 bgmMuted
                   ? 'bg-[#F4F2EC] text-[#8A988E]'
                   : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
               }`}
             >
               <Music className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">{bgmMuted ? '音樂關' : '音樂開'}</span>
+              <span className="lg:hidden xl:inline">{bgmMuted ? '音樂關' : '音樂開'}</span>
             </button>
             <button
               type="button"
@@ -345,9 +459,9 @@ export const TopHud: React.FC<TopHudProps> = ({
               aria-haspopup="listbox"
               aria-label="選擇並套用背景音樂曲目"
               title="點擊展開曲目清單，自由點選套用音樂"
-              className="bg-white/90 hover:bg-white text-[11px] font-medium text-[#1A2B20] px-2.5 py-1.5 border-l border-[#E2DDD3] flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+              className="flex-1 lg:flex-initial justify-between bg-white/90 hover:bg-white text-[11px] font-medium text-[#1A2B20] px-2.5 py-1.5 border-l border-[#E2DDD3] flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer min-h-[34px] lg:min-h-0"
             >
-              <span className="max-w-[148px] truncate">{activeTrack.name}</span>
+              <span className="truncate max-w-[200px] lg:max-w-[138px]">{activeTrack.name}</span>
               <ChevronDown
                 className={`w-3.5 h-3.5 text-[#6A7B6F] shrink-0 transition-transform duration-150 ${
                   musicMenuOpen ? 'rotate-180' : ''
@@ -358,7 +472,7 @@ export const TopHud: React.FC<TopHudProps> = ({
 
           {musicMenuOpen && (
             <div
-              className="absolute right-0 top-full mt-2 w-80 bg-white border border-[#E2DDD3] rounded-xl shadow-xl z-50 overflow-hidden"
+              className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-28 sm:top-full sm:mt-2 sm:w-80 bg-white border border-[#E2DDD3] rounded-xl shadow-xl z-50 overflow-hidden"
               role="dialog"
               aria-label="背景音樂曲目選單"
             >
@@ -523,7 +637,7 @@ export const TopHud: React.FC<TopHudProps> = ({
           onClick={onToggleMute}
           title={muted ? '開啟全部聲音' : '全部靜音'}
           aria-label={muted ? '開啟全部聲音' : '全部靜音'}
-          className="p-2 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#4A5D50] transition-colors cursor-pointer"
+          className="hidden lg:block p-2 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-[#4A5D50] transition-colors cursor-pointer"
         >
           {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>
@@ -532,7 +646,7 @@ export const TopHud: React.FC<TopHudProps> = ({
           type="button"
           onClick={onReturnTitle}
           title="返回主選單"
-          className="px-3 py-1.5 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-xs font-medium text-[#4A5D50] flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+          className="hidden lg:flex px-3 py-1.5 rounded-lg border border-[#E2DDD3] bg-white hover:bg-[#FAF9F5] text-xs font-medium text-[#4A5D50] items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">重來</span>

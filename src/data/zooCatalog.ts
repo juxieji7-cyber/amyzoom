@@ -16,7 +16,9 @@ export const GRID_COLS = 10;
 export const GRID_ROWS = 8;
 export const GATE_POS = { x: 4, y: 7 };
 
-export const TITLE_BANNER_IMAGE = '/src/assets/images/zoo_title_banner_1795226071596.jpg';
+const ASSET_BASE = import.meta.env.BASE_URL || '/';
+
+export const TITLE_BANNER_IMAGE = `${ASSET_BASE}src/assets/images/zoo_title_banner_1795226071596.jpg`;
 
 export const FLOOR_TYPES: Record<
   FloorType,
@@ -72,7 +74,7 @@ export const BIOMES: Record<BiomeType, BiomeSpec> = {
     id: 'savanna',
     name: '黃金草原生態',
     shortName: '草原',
-    imagePath: '/src/assets/images/biome_savanna_icon_1795226071571.jpg',
+    imagePath: `${ASSET_BASE}src/assets/images/biome_savanna_icon_1795226071571.jpg`,
     groundColor: '#8B9D62',
     accentColor: '#B47B2B',
     fenceColor: '#6D553D',
@@ -81,7 +83,7 @@ export const BIOMES: Record<BiomeType, BiomeSpec> = {
     id: 'bamboo',
     name: '翠綠竹林生態',
     shortName: '竹林',
-    imagePath: '/src/assets/images/biome_bamboo_icon_1795226071589.jpg',
+    imagePath: `${ASSET_BASE}src/assets/images/biome_bamboo_icon_1795226071589.jpg`,
     groundColor: '#6A8D58',
     accentColor: '#2E7D32',
     fenceColor: '#4A5D41',
@@ -90,7 +92,7 @@ export const BIOMES: Record<BiomeType, BiomeSpec> = {
     id: 'arctic',
     name: '極地海岸生態',
     shortName: '極地',
-    imagePath: '/src/assets/images/biome_arctic_icon_1795226070419.jpg',
+    imagePath: `${ASSET_BASE}src/assets/images/biome_arctic_icon_1795226070419.jpg`,
     groundColor: '#CBDCE6',
     accentColor: '#0284C7',
     fenceColor: '#5B6B7A',
@@ -99,7 +101,7 @@ export const BIOMES: Record<BiomeType, BiomeSpec> = {
     id: 'rainforest',
     name: '熱帶雨林生態',
     shortName: '雨林',
-    imagePath: '/src/assets/images/biome_rainforest_icon_1795226070556.jpg',
+    imagePath: `${ASSET_BASE}src/assets/images/biome_rainforest_icon_1795226070556.jpg`,
     groundColor: '#60885A',
     accentColor: '#0F766E',
     fenceColor: '#5C4636',
@@ -663,8 +665,8 @@ export const WEATHERS: Record<WeatherType, WeatherSpec> = {
   },
   rainy: {
     id: 'rainy',
-    name: '細雨綿綿',
-    shortDesc: '戶外人潮減少、泥土草地較易變髒，但雨林與濕地動物喜愛濕潤。',
+    name: '梅雨季',
+    shortDesc: '細雨綿綿使步道積起水窪倒影，戶外人潮減少，但雨林與濕地動物喜愛濕潤。',
     visitorSpawnMultiplier: 0.72,
     visitorMoodDelta: -0.65,
     hungerDecayMultiplier: 0.95,
@@ -675,7 +677,7 @@ export const WEATHERS: Record<WeatherType, WeatherSpec> = {
   heatwave: {
     id: 'heatwave',
     name: '高溫熱浪',
-    shortDesc: '氣溫炎熱使動物更易飢渴、極地動物不適，遊客渴望輕食冷飲與樹蔭長椅。',
+    shortDesc: '熱氣蒸騰形成空氣扭曲熱浪，動物更易飢渴、極地動物不適，遊客渴望冷飲與樹蔭。',
     visitorSpawnMultiplier: 0.85,
     visitorMoodDelta: -0.5,
     hungerDecayMultiplier: 1.45,

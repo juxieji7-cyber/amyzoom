@@ -2,7 +2,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Compass, RotateCcw, Eye, Camera, Download, X, ZoomIn, ZoomOut, Heart } from 'lucide-react';
+import {
+  Compass,
+  RotateCcw,
+  Eye,
+  Camera,
+  Download,
+  X,
+  ZoomIn,
+  ZoomOut,
+  Heart,
+  Paintbrush,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+} from 'lucide-react';
 import { GATE_POS, GRID_COLS, GRID_ROWS } from '../data/zooCatalog';
 import {
   BuildTool,
@@ -35,7 +50,12 @@ import {
   shouldShowSeasonalTileEffect,
   TILE_SIZE,
 } from '../three/zooModels';
-import { getWaterRippleTexture } from '../three/proceduralTextures';
+import {
+  getHeatMirageTexture,
+  getPuddleMaskTexture,
+  getRainRippleRingTexture,
+  getWaterRippleTexture,
+} from '../three/proceduralTextures';
 import { soundFX } from '../utils/sound';
 
 import { getHabitatVegetationInfo, getVisitorMoodInfo } from '../utils/parkLogic';
@@ -431,13 +451,21 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     height: number;
     filename: string;
   } | null>(null);
+  const [touchPaintMode, setTouchPaintMode] = useState<boolean>(false);
 
   const captureFnRef = useRef<(() => void) | null>(null);
   const adjustFovRef = useRef<((deltaFov: number) => void) | null>(null);
+  const setFpKeyRef = useRef<((code: string, down: boolean) => void) | null>(null);
   const pendingPhotoQueueRef = useRef<PendingPhotoCapture[]>([]);
   const seenPhotoCaptureIdsRef = useRef<Set<string>>(new Set());
   const onPhotoCapturedRef = useRef(onPhotoCaptured);
   onPhotoCapturedRef.current = onPhotoCaptured;
+
+  useEffect(() => {
+    if (!activeTool.startsWith('floor_')) {
+      setTouchPaintMode(false);
+    }
+  }, [activeTool]);
 
   useEffect(() => {
     if (!pendingPhotoCaptures || pendingPhotoCaptures.length === 0) return;
@@ -463,6 +491,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     speed,
     photoMode,
     activeTool,
+    touchPaintMode,
     selectedPos,
     selectedVisitorId,
     visitors,
@@ -482,6 +511,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     speed,
     photoMode,
     activeTool,
+    touchPaintMode,
     selectedPos,
     selectedVisitorId,
     visitors,
@@ -769,6 +799,200 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     const visitorMeshes = new Map<string, HumanActorEntry>();
     const keeperMeshes = new Map<string, HumanActorEntry>();
     const waterRippleTex = getWaterRippleTexture();
+    const puddleMaskTex = getPuddleMaskTexture();
+    const rainRippleTex = getRainRippleRingTexture();
+    const heatMirageTex = getHeatMirageTexture();
+
+    // 3D Road Puddle Reflection & Expanding Raindrop Ripple System (Rainy / Monsoon weather)
+    const MAX_PUDDLES = GRID_COLS * GRID_ROWS * 2;
+    const puddleGeo = new THREE.PlaneGeometry(1, 1);
+    puddleGeo.rotateX(-Math.PI / 2);
+    const puddleMat = new THREE.MeshPhysicalMaterial({
+      color: '#8CB6D9',
+      alphaMap: puddleMaskTex,
+      transparent: true,
+      opacity: 0,
+      roughness: 0.04,
+      metalness: 0.55,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.03,
+      reflectivity: 1.0,
+      envMapIntensity: 2.45,
+      bumpMap: waterRippleTex,
+      bumpScale: 0.018,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    const puddleMesh = new THREE.InstancedMesh(puddleGeo, puddleMat, MAX_PUDDLES);
+    puddleMesh.position.y = 0.0125;
+    puddleMesh.count = 0;
+    puddleMesh.visible = false;
+    puddleMesh.frustumCulled = false;
+    puddleMesh.renderOrder = 1;
+    scene.add(puddleMesh);
+
+    const MAX_RIPPLES = 44;
+    const rippleGeo = new THREE.PlaneGeometry(1, 1);
+    rippleGeo.rotateX(-Math.PI / 2);
+    const rippleMat = new THREE.MeshBasicMaterial({
+      map: rainRippleTex,
+      color: '#E0F2FE',
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const rippleMesh = new THREE.InstancedMesh(rippleGeo, rippleMat, MAX_RIPPLES);
+    rippleMesh.position.y = 0.0148;
+    rippleMesh.count = 0;
+    rippleMesh.visible = false;
+    rippleMesh.frustumCulled = false;
+    rippleMesh.renderOrder = 2;
+    scene.add(rippleMesh);
+
+    interface PuddleSpot {
+      wx: number;
+      wz: number;
+      rx: number;
+      rz: number;
+      rotY: number;
+      nearGate: boolean;
+    }
+    const activePuddleSpots: PuddleSpot[] = [];
+    const _puddleDummy = new THREE.Object3D();
+    const _puddleInstColor = new THREE.Color();
+    const _dayPuddleSky = new THREE.Color('#8CB6D9');
+    const _nightPuddleSky = new THREE.Color('#344E6B');
+    const _roadWetColor = new THREE.Color();
+    const _roadBaseColor = new THREE.Color();
+    const _roadDarkWetTint = new THREE.Color('#8A97A4');
+
+    const rebuildPuddleLayout = (grid: ParkTile[][]) => {
+      activePuddleSpots.length = 0;
+      let count = 0;
+      for (let y = 0; y < GRID_ROWS && count < MAX_PUDDLES; y++) {
+        for (let x = 0; x < GRID_COLS && count < MAX_PUDDLES; x++) {
+          const tile = grid[y]?.[x];
+          if (!tile || (tile.type !== 'path' && tile.type !== 'gate')) continue;
+
+          const hash = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+          if (tile.type === 'path' && hash % 5 === 0) continue; // keep ~80% of paths puddled naturally
+
+          const [wx, wz] = gridToWorld(x, y);
+          const isWood = tile.type === 'path' && tile.floorType === 'wood';
+          const scaleMul = tile.type === 'gate' ? 1.15 : isWood ? 0.58 : 1.0;
+          const nearGate = Math.abs(x - GATE_POS.x) + Math.abs(y - GATE_POS.y) <= 2;
+
+          const primaryOffX = (((hash >> 3) % 100) / 100 - 0.5) * 0.82;
+          const primaryOffZ = (((hash >> 10) % 100) / 100 - 0.5) * 0.82;
+          const rx1 = (0.78 + ((hash >> 2) % 45) * 0.011) * scaleMul;
+          const rz1 = (0.56 + ((hash >> 6) % 38) * 0.01) * scaleMul;
+          const rot1 = (((hash >> 14) % 314) / 100) * 2;
+
+          _puddleDummy.position.set(wx + primaryOffX, 0, wz + primaryOffZ);
+          _puddleDummy.rotation.set(0, rot1, 0);
+          _puddleDummy.scale.set(rx1, 1, rz1);
+          _puddleDummy.updateMatrix();
+          puddleMesh.setMatrixAt(count, _puddleDummy.matrix);
+          _puddleInstColor.set(nearGate ? '#FFF5E1' : '#FFFFFF');
+          puddleMesh.setColorAt(count, _puddleInstColor);
+          activePuddleSpots.push({
+            wx: wx + primaryOffX,
+            wz: wz + primaryOffZ,
+            rx: rx1,
+            rz: rz1,
+            rotY: rot1,
+            nearGate,
+          });
+          count += 1;
+
+          // Occasional secondary puddle on plaza or wide stone tiles
+          if (count < MAX_PUDDLES && !isWood && (tile.type === 'gate' || hash % 3 === 1)) {
+            const secOffX = -primaryOffX * 0.72 + (hash % 2 === 0 ? 0.35 : -0.35);
+            const secOffZ = -primaryOffZ * 0.72 + (hash % 3 === 0 ? 0.3 : -0.3);
+            const rx2 = 0.52 + ((hash >> 8) % 30) * 0.009;
+            const rz2 = 0.4 + ((hash >> 12) % 25) * 0.008;
+            const rot2 = rot1 + 1.1;
+            _puddleDummy.position.set(wx + secOffX, 0, wz + secOffZ);
+            _puddleDummy.rotation.set(0, rot2, 0);
+            _puddleDummy.scale.set(rx2, 1, rz2);
+            _puddleDummy.updateMatrix();
+            puddleMesh.setMatrixAt(count, _puddleDummy.matrix);
+            _puddleInstColor.set(nearGate ? '#FFF5E1' : '#EBF5FF');
+            puddleMesh.setColorAt(count, _puddleInstColor);
+            activePuddleSpots.push({
+              wx: wx + secOffX,
+              wz: wz + secOffZ,
+              rx: rx2,
+              rz: rz2,
+              rotY: rot2,
+              nearGate,
+            });
+            count += 1;
+          }
+        }
+      }
+      puddleMesh.count = count;
+      puddleMesh.instanceMatrix.needsUpdate = true;
+      if (puddleMesh.instanceColor) puddleMesh.instanceColor.needsUpdate = true;
+    };
+
+    const rippleStates = Array.from({ length: MAX_RIPPLES }, (_, idx) => ({
+      phase: (idx / MAX_RIPPLES) % 1,
+      speed: 0.78 + (idx % 5) * 0.12,
+      spotIdx: idx,
+      jitterX: (((idx * 37) % 100) / 100 - 0.5) * 0.42,
+      jitterZ: (((idx * 71) % 100) / 100 - 0.5) * 0.42,
+    }));
+
+    // 3D Heatwave Thermal Mirage Ribbons & Rising Dust Motes
+    const MAX_MIRAGES = 24;
+    const heatMirageGeo = new THREE.PlaneGeometry(2.2, 0.72);
+    const heatMirageMat = new THREE.MeshBasicMaterial({
+      map: heatMirageTex,
+      color: '#FDE68A',
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const heatMirageMesh = new THREE.InstancedMesh(heatMirageGeo, heatMirageMat, MAX_MIRAGES);
+    heatMirageMesh.visible = false;
+    heatMirageMesh.frustumCulled = false;
+    scene.add(heatMirageMesh);
+
+    const mirageSpots = Array.from({ length: MAX_MIRAGES }, (_, idx) => ({
+      x: ((idx * 5.3) % 24) - 12,
+      z: ((idx * 4.1) % 18) - 9,
+      baseY: 0.34 + (idx % 4) * 0.24,
+      phase: idx * 0.75,
+      scaleX: 0.85 + (idx % 3) * 0.28,
+      scaleY: 0.75 + (idx % 4) * 0.16,
+    }));
+
+    const heatDustCount = 150;
+    const heatDustPositions = new Float32Array(heatDustCount * 3);
+    for (let i = 0; i < heatDustCount; i++) {
+      heatDustPositions[i * 3] = (Math.random() - 0.5) * 30;
+      heatDustPositions[i * 3 + 1] = Math.random() * 5.5;
+      heatDustPositions[i * 3 + 2] = (Math.random() - 0.5) * 24;
+    }
+    const heatDustGeo = new THREE.BufferGeometry();
+    heatDustGeo.setAttribute('position', new THREE.BufferAttribute(heatDustPositions, 3));
+    const heatDustMat = new THREE.PointsMaterial({
+      color: '#FDE68A',
+      size: 0.14,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const heatDustPoints = new THREE.Points(heatDustGeo, heatDustMat);
+    heatDustPoints.visible = false;
+    scene.add(heatDustPoints);
 
     // 3D Rain particles
     const rainCount = 520;
@@ -837,6 +1061,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     const pointer = new THREE.Vector2();
     let hoveredCell: { x: number; y: number } | null = null;
     let pointerDownPos: { x: number; y: number } | null = null;
+    let paintDragActive = false;
     let lastRaycastTime = 0;
 
     let prevPhotoMode = false;
@@ -851,6 +1076,11 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     let fpLastMouseX = 0;
     let fpLastMouseY = 0;
     const pressedKeys = new Set<string>();
+
+    setFpKeyRef.current = (code: string, down: boolean) => {
+      if (down) pressedKeys.add(code);
+      else pressedKeys.delete(code);
+    };
 
     captureFnRef.current = () => {
       const prevPr = renderer.getPixelRatio();
@@ -950,7 +1180,11 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       hoveredCell = cell;
       setHoveredTileInfo(cell);
 
-      if (e.buttons === 1 && e.shiftKey && stateRef.current.activeTool.startsWith('floor_') && cell) {
+      if (
+        (paintDragActive || (e.buttons === 1 && e.shiftKey)) &&
+        stateRef.current.activeTool.startsWith('floor_') &&
+        cell
+      ) {
         stateRef.current.onTilePaintDrag(cell.x, cell.y);
       }
     };
@@ -965,8 +1199,12 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
 
       if (e.button === 0) {
         pointerDownPos = { x: e.clientX, y: e.clientY };
-        if (e.shiftKey && stateRef.current.activeTool.startsWith('floor_')) {
+        const wantsPaintDrag =
+          (e.shiftKey || stateRef.current.touchPaintMode) &&
+          stateRef.current.activeTool.startsWith('floor_');
+        if (wantsPaintDrag) {
           controls.enabled = false;
+          paintDragActive = true;
           const cell = pickGridCell(e);
           if (cell) stateRef.current.onTileClick(cell.x, cell.y);
         }
@@ -980,16 +1218,23 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       }
 
       controls.enabled = true;
+      if (paintDragActive) {
+        paintDragActive = false;
+        pointerDownPos = null;
+        return;
+      }
+
       if (e.button === 0 && pointerDownPos && !e.shiftKey) {
         const dx = e.clientX - pointerDownPos.x;
         const dy = e.clientY - pointerDownPos.y;
-        if (Math.hypot(dx, dy) < 6) {
+        const tapThreshold = e.pointerType === 'touch' ? 14 : 6;
+        if (Math.hypot(dx, dy) < tapThreshold) {
           const hit = pickGridHit(e);
           if (hit) {
             if (stateRef.current.activeTool === 'select') {
               // Find closest visitor near click point in world space
               let clickedVisitor: VisitorInstance | null = null;
-              let bestVisDist = 1.35;
+              let bestVisDist = e.pointerType === 'touch' ? 1.65 : 1.35;
               for (const v of stateRef.current.visitors) {
                 const vm = visitorMeshes.get(v.id);
                 const vx = vm ? vm.mesh.position.x : gridToWorld(v.x, v.y)[0];
@@ -1157,15 +1402,21 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     }
 
     let grassTimeAccum = 0;
+    let weatherAnimAccum = 0;
     let nightBlend = 0;
+    let rainBlend = 0;
+    let heatBlend = 0;
+    let lastAppliedWetness = -1;
 
     function syncSceneObjects(delta: number, elapsed: number) {
       const s = stateRef.current;
 
       // Subtle animated water ripples & swaying 3D grass blades
-      waterRippleTex.offset.x = (elapsed * 0.035) % 1;
-      waterRippleTex.offset.y = (elapsed * 0.022) % 1;
-      grassTimeAccum += delta * (s.weather === 'breezy' ? 2.2 : 1.0);
+      const weatherDt = s.speed === 0 ? 0 : delta * (s.speed === 2 ? 1.45 : 1.0);
+      weatherAnimAccum += weatherDt;
+      waterRippleTex.offset.x = (weatherAnimAccum * (0.035 + rainBlend * 0.045)) % 1;
+      waterRippleTex.offset.y = (weatherAnimAccum * (0.022 + rainBlend * 0.035)) % 1;
+      grassTimeAccum += delta * (s.weather === 'breezy' ? 2.2 : s.weather === 'rainy' ? 1.35 : 1.0);
       grassField.timeUniform.value = grassTimeAccum;
 
       // 1. Sync Grid Tiles & Hover lift + Thriving Aura + Seasonal Tile Effects
@@ -1259,6 +1510,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
 
       if (gridStructureChanged) {
         grassField.syncGridVisibility(s.grid);
+        rebuildPuddleLayout(s.grid);
+        lastAppliedWetness = -1;
       }
 
       // 2. Hover & Selection Frames (hidden in Photo Mode)
@@ -1605,7 +1858,10 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         }
       }
 
-      // 6. Dynamic 3D Weather + Day/Night Lighting & Volumetric Spotlights
+      // 6. Dynamic 3D Weather + Wet Road Puddles + Heat-Mirage + Day/Night Lighting
+      rainBlend = THREE.MathUtils.damp(rainBlend, s.weather === 'rainy' ? 1 : 0, 1.8, delta);
+      heatBlend = THREE.MathUtils.damp(heatBlend, s.weather === 'heatwave' ? 1 : 0, 1.8, delta);
+
       let daySunIntensity = 1.5;
       let dayFogDensity = 0.0125;
       if (s.weather === 'rainy') {
@@ -1615,23 +1871,26 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         daySunIntensity = 0.82;
         dayFogDensity = 0.0165;
         rainPoints.visible = true;
-        const posAttr = rainGeo.getAttribute('position') as THREE.BufferAttribute;
-        for (let i = 0; i < rainCount; i++) {
-          let py = posAttr.getY(i) - delta * 14;
-          let px = posAttr.getX(i) - delta * 1.8;
-          if (py < 0) {
-            py = 14 + Math.random() * 2;
-            px = (Math.random() - 0.5) * 38;
+        if (s.speed > 0) {
+          const posAttr = rainGeo.getAttribute('position') as THREE.BufferAttribute;
+          const rainStep = delta * (s.speed === 2 ? 1.45 : 1.0);
+          for (let i = 0; i < rainCount; i++) {
+            let py = posAttr.getY(i) - rainStep * 14;
+            let px = posAttr.getX(i) - rainStep * 1.8;
+            if (py < 0) {
+              py = 14 + Math.random() * 2;
+              px = (Math.random() - 0.5) * 38;
+            }
+            posAttr.setXY(i, px, py);
           }
-          posAttr.setXY(i, px, py);
+          posAttr.needsUpdate = true;
         }
-        posAttr.needsUpdate = true;
       } else if (s.weather === 'heatwave') {
         _targetSkyColor.set('#F3DFB8');
         _targetFogColor.set('#F3DFB8');
         _sunColor.set('#FFE4A8');
-        daySunIntensity = 1.85;
-        dayFogDensity = 0.0148;
+        daySunIntensity = 1.88;
+        dayFogDensity = 0.0152;
         rainPoints.visible = false;
       } else if (s.weather === 'breezy') {
         _targetSkyColor.set('#CFE7EA');
@@ -1647,6 +1906,125 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         daySunIntensity = 1.5;
         dayFogDensity = 0.0125;
         rainPoints.visible = false;
+      }
+
+      // Modulate wet road sheen & darken stone/asphalt subtly during rainy monsoon weather
+      if (Math.abs(rainBlend - lastAppliedWetness) > 0.012 || (rainBlend < 0.01 && lastAppliedWetness !== 0)) {
+        lastAppliedWetness = rainBlend < 0.01 ? 0 : rainBlend;
+        const wetAmt = lastAppliedWetness;
+        for (let y = 0; y < GRID_ROWS; y++) {
+          for (let x = 0; x < GRID_COLS; x++) {
+            const slot = tileSlotGroups[y][x];
+            slot.traverse((obj) => {
+              if (obj instanceof THREE.Mesh && obj.userData.isRoadSurface) {
+                const mat = obj.material as THREE.MeshStandardMaterial;
+                const baseRough = (obj.userData.baseRoughness as number) ?? 0.86;
+                const baseMetal = (obj.userData.baseMetalness as number) ?? 0.04;
+                const baseHex = (obj.userData.baseColorHex as string) ?? '#FFFFFF';
+                mat.roughness = THREE.MathUtils.lerp(baseRough, 0.24, wetAmt);
+                mat.metalness = THREE.MathUtils.lerp(baseMetal, 0.2, wetAmt);
+                mat.envMapIntensity = THREE.MathUtils.lerp(1.0, 1.55, wetAmt);
+                _roadBaseColor.set(baseHex);
+                _roadWetColor.copy(_roadBaseColor).lerp(_roadDarkWetTint, wetAmt * 0.26);
+                mat.color.copy(_roadWetColor);
+              }
+            });
+          }
+        }
+      }
+
+      // Reflective Road Puddles + Expanding Raindrop Ripple Rings
+      const showPuddles = rainBlend > 0.025 && activePuddleSpots.length > 0;
+      puddleMesh.visible = showPuddles;
+      if (showPuddles) {
+        puddleMat.opacity = rainBlend * (0.78 + 0.06 * Math.sin(weatherAnimAccum * 1.4));
+        puddleMat.envMapIntensity = THREE.MathUtils.lerp(2.45, 1.85, nightBlend);
+        puddleMat.color.copy(_dayPuddleSky).lerp(_nightPuddleSky, nightBlend);
+
+        // Subtle warm lantern shimmer in puddles near gate/spotlights at night
+        for (let i = 0; i < activePuddleSpots.length; i++) {
+          if (activePuddleSpots[i].nearGate) {
+            _puddleInstColor.set('#FFFFFF').lerp(new THREE.Color('#FFD89B'), nightBlend * 0.72);
+            puddleMesh.setColorAt(i, _puddleInstColor);
+          }
+        }
+        if (puddleMesh.instanceColor) puddleMesh.instanceColor.needsUpdate = true;
+
+        const rippleCount = Math.min(MAX_RIPPLES, activePuddleSpots.length * 2);
+        rippleMesh.visible = rainBlend > 0.08 && rippleCount > 0;
+        rippleMesh.count = rippleCount;
+        rippleMat.opacity = rainBlend * (0.56 - nightBlend * 0.14);
+
+        for (let i = 0; i < rippleCount; i++) {
+          const rs = rippleStates[i];
+          if (s.speed > 0) {
+            rs.phase += delta * rs.speed * (s.speed === 2 ? 1.45 : 1.0);
+            if (rs.phase >= 1) {
+              rs.phase -= 1;
+              rs.spotIdx = (rs.spotIdx + 7) % activePuddleSpots.length;
+            }
+          }
+          const spot = activePuddleSpots[rs.spotIdx % activePuddleSpots.length];
+          const ease = 1 - Math.pow(1 - rs.phase, 2);
+          const ringSize = (0.08 + ease * 0.36) * Math.min(spot.rx, spot.rz);
+          const fadeScale = rs.phase < 0.88 ? ringSize : ringSize * Math.max(0.01, (1 - rs.phase) * 8.3);
+          _puddleDummy.position.set(
+            spot.wx + rs.jitterX * spot.rx * 0.55,
+            0,
+            spot.wz + rs.jitterZ * spot.rz * 0.55
+          );
+          _puddleDummy.rotation.set(0, rs.phase * 0.6, 0);
+          _puddleDummy.scale.set(fadeScale, 1, fadeScale);
+          _puddleDummy.updateMatrix();
+          rippleMesh.setMatrixAt(i, _puddleDummy.matrix);
+        }
+        rippleMesh.instanceMatrix.needsUpdate = true;
+      } else {
+        rippleMesh.visible = false;
+      }
+
+      // 3D Heat-Mirage Shimmer Ribbons & Rising Thermal Motes
+      const showHeatMirage = heatBlend > 0.025;
+      heatMirageMesh.visible = showHeatMirage;
+      heatDustPoints.visible = showHeatMirage;
+      if (showHeatMirage) {
+        heatMirageMat.opacity = heatBlend * THREE.MathUtils.lerp(0.24, 0.12, nightBlend);
+        const camAzimuth = Math.atan2(camera.position.x, camera.position.z);
+        for (let i = 0; i < MAX_MIRAGES; i++) {
+          const ms = mirageSpots[i];
+          const wave = Math.sin(weatherAnimAccum * 2.1 + ms.phase);
+          const rise = ((weatherAnimAccum * 0.22 + ms.phase * 0.19) % 1) * 0.45;
+          _puddleDummy.position.set(
+            ms.x + Math.sin(weatherAnimAccum * 1.3 + ms.phase) * 0.32,
+            ms.baseY + rise,
+            ms.z + Math.cos(weatherAnimAccum * 1.1 + ms.phase) * 0.2
+          );
+          _puddleDummy.rotation.set(-0.28, camAzimuth, wave * 0.06);
+          _puddleDummy.scale.set(
+            ms.scaleX * (1 + wave * 0.12),
+            ms.scaleY * (0.9 + Math.cos(weatherAnimAccum * 2.8 + ms.phase) * 0.16),
+            1
+          );
+          _puddleDummy.updateMatrix();
+          heatMirageMesh.setMatrixAt(i, _puddleDummy.matrix);
+        }
+        heatMirageMesh.instanceMatrix.needsUpdate = true;
+
+        heatDustMat.opacity = heatBlend * (0.48 - nightBlend * 0.2);
+        if (s.speed > 0) {
+          const dAttr = heatDustGeo.getAttribute('position') as THREE.BufferAttribute;
+          const dustStep = delta * (s.speed === 2 ? 1.45 : 1.0);
+          for (let i = 0; i < heatDustCount; i++) {
+            let py = dAttr.getY(i) + dustStep * (0.45 + (i % 4) * 0.12);
+            let px = dAttr.getX(i) + Math.sin(weatherAnimAccum * 1.8 + i) * dustStep * 0.25;
+            if (py > 5.8) {
+              py = 0.08 + Math.random() * 0.3;
+              px = (Math.random() - 0.5) * 30;
+            }
+            dAttr.setXY(i, px, py);
+          }
+          dAttr.needsUpdate = true;
+        }
       }
 
       // Seasonal 3D Particle Animation
@@ -1725,9 +2103,10 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         3,
         delta
       );
+      const dayExposure = s.weather === 'heatwave' ? 1.12 : s.weather === 'rainy' ? 0.99 : 1.06;
       renderer.toneMappingExposure = THREE.MathUtils.damp(
         renderer.toneMappingExposure,
-        THREE.MathUtils.lerp(1.06, 0.92, nightBlend),
+        THREE.MathUtils.lerp(dayExposure, 0.92, nightBlend),
         3,
         delta
       );
@@ -2168,6 +2547,14 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       beamTex.dispose();
       poolTex.dispose();
       seasonalParticleTex.dispose();
+      puddleGeo.dispose();
+      puddleMat.dispose();
+      rippleGeo.dispose();
+      rippleMat.dispose();
+      heatMirageGeo.dispose();
+      heatMirageMat.dispose();
+      heatDustGeo.dispose();
+      heatDustMat.dispose();
       rainGeo.dispose();
       rainMat.dispose();
       seasonalGeo.dispose();
@@ -2187,13 +2574,13 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       className={`relative overflow-hidden bg-[#C8DFC2] select-none ${
         photoMode
           ? 'w-full h-full rounded-none border-0'
-          : 'w-full h-[500px] sm:h-[560px] lg:h-[610px] rounded-2xl border-2 border-[#2A5038] shadow-sm'
+          : 'w-full h-[calc(100dvh-16.5rem)] min-h-[320px] max-h-[520px] sm:h-[520px] lg:h-[610px] rounded-2xl border-2 border-[#2A5038] shadow-sm'
       }`}
     >
       {/* Dedicated WebGL Mount */}
       <div
         ref={mountRef}
-        className={`w-full h-full ${
+        className={`w-full h-full touch-none ${
           photoMode ? 'cursor-crosshair active:cursor-grabbing' : 'cursor-grab active:cursor-grabbing'
         }`}
       />
@@ -2289,21 +2676,29 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <div
               className={`absolute inset-0 bg-gradient-to-b ${
                 isNight
-                  ? 'from-amber-900/10 via-transparent to-orange-950/15'
-                  : 'from-amber-400/20 via-orange-200/8 to-amber-500/15'
+                  ? 'from-amber-900/12 via-transparent to-orange-950/18'
+                  : 'from-amber-400/22 via-orange-200/8 to-amber-500/18'
               }`}
             />
+            {!isNight && (
+              <div className="absolute -top-28 -right-24 w-[28rem] h-[28rem] rounded-full bg-radial from-amber-200/45 via-orange-200/15 to-transparent animate-sun-breathe" />
+            )}
             <div
               className={`absolute inset-0 ${
                 isNight
                   ? 'shadow-[inset_0_0_80px_rgba(180,83,9,0.18)]'
-                  : 'shadow-[inset_0_0_110px_rgba(245,158,11,0.28)]'
+                  : 'shadow-[inset_0_0_115px_rgba(245,158,11,0.32)]'
               }`}
             />
 
-            {/* Optical SVG turbulence heat-distortion shimmer bands */}
+            {/* Refractive backdrop heat-mirage bands distorting underlying 3D scene */}
+            <div className="absolute inset-x-0 top-[14%] h-[22%] heat-mirage-refraction bg-gradient-to-b from-transparent via-amber-100/12 to-transparent animate-heat-mirage" />
+            <div className="absolute inset-x-0 top-[44%] h-[24%] heat-mirage-refraction bg-gradient-to-b from-transparent via-orange-100/10 to-transparent animate-heat-mirage-reverse" />
+            <div className="absolute inset-x-0 bottom-[6%] h-[26%] heat-mirage-refraction bg-gradient-to-t from-orange-300/16 via-amber-100/10 to-transparent animate-heat-mirage" />
+
+            {/* Optical SVG turbulence heat-distortion shimmer waves */}
             <svg
-              className="absolute inset-0 w-full h-full opacity-55"
+              className="absolute inset-0 w-full h-full opacity-75"
               viewBox="0 0 1000 600"
               preserveAspectRatio="none"
             >
@@ -2311,54 +2706,59 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                 <filter id="zoo-heat-distortion" x="-5%" y="-5%" width="110%" height="110%">
                   <feTurbulence
                     type="fractalNoise"
-                    baseFrequency="0.014 0.045"
+                    baseFrequency="0.015 0.055"
                     numOctaves="2"
                     seed="7"
                     result="noise"
                   >
                     <animate
                       attributeName="baseFrequency"
-                      dur="5.5s"
-                      values="0.012 0.04;0.018 0.058;0.012 0.04"
+                      dur="4.6s"
+                      values="0.012 0.045;0.02 0.068;0.012 0.045"
                       repeatCount="indefinite"
                     />
                   </feTurbulence>
                   <feDisplacementMap
                     in="SourceGraphic"
                     in2="noise"
-                    scale="14"
+                    scale="18"
                     xChannelSelector="R"
                     yChannelSelector="G"
                   />
                 </filter>
                 <linearGradient id="zoo-heat-band" x1="0%" y1="100%" x2="0%" y2="0%">
                   <stop offset="0%" stopColor="rgba(253,224,71,0.0)" />
-                  <stop offset="45%" stopColor="rgba(254,215,170,0.22)" />
+                  <stop offset="45%" stopColor="rgba(254,215,170,0.28)" />
                   <stop offset="100%" stopColor="rgba(251,191,36,0.0)" />
                 </linearGradient>
               </defs>
 
               <g className="weather-heat-filter">
-                <rect x="0" y="70" width="1000" height="170" fill="url(#zoo-heat-band)" />
-                <rect x="0" y="250" width="1000" height="150" fill="url(#zoo-heat-band)" opacity="0.65" />
+                <rect x="0" y="65" width="1000" height="175" fill="url(#zoo-heat-band)" />
+                <rect x="0" y="255" width="1000" height="165" fill="url(#zoo-heat-band)" opacity="0.72" />
                 <path
-                  d="M-40 165 Q 240 140 520 165 T 1040 155"
+                  d="M-40 155 Q 240 128 520 158 T 1040 146"
                   fill="none"
-                  stroke="rgba(255,247,214,0.34)"
+                  stroke="rgba(255,247,214,0.42)"
+                  strokeWidth="14"
+                />
+                <path
+                  d="M-40 315 Q 280 340 560 308 T 1040 326"
+                  fill="none"
+                  stroke="rgba(254,215,170,0.34)"
                   strokeWidth="12"
                 />
                 <path
-                  d="M-40 315 Q 280 335 560 310 T 1040 325"
+                  d="M-40 462 Q 260 442 540 466 T 1040 452"
                   fill="none"
-                  stroke="rgba(254,215,170,0.26)"
+                  stroke="rgba(253,224,71,0.26)"
                   strokeWidth="10"
                 />
               </g>
             </svg>
 
             {/* Subtle rising thermal haze */}
-            <div className="absolute inset-x-0 top-0 h-2/5 backdrop-blur-[0.7px] bg-gradient-to-b from-amber-200/14 to-transparent animate-heat-shimmer" />
-            <div className="absolute inset-x-0 bottom-0 h-1/3 backdrop-blur-[0.5px] bg-gradient-to-t from-orange-300/12 to-transparent animate-heat-mirage" />
+            <div className="absolute inset-x-0 top-0 h-2/5 bg-gradient-to-b from-amber-200/16 to-transparent animate-heat-shimmer" />
           </>
         )}
 
@@ -2515,24 +2915,41 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
 
       {/* Standard Bottom Camera & Controls Helper Bar */}
       {!photoMode && (
-        <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-20">
-          <div className="px-3 py-1.5 rounded-xl bg-[#1A2B20]/85 text-white text-[11px] flex items-center gap-2 pointer-events-auto">
-            <Compass className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-            <span className="whitespace-nowrap">
-              左鍵點擊地塊/動物/遊客互動 · 拖曳旋轉 · 右鍵平移 · 滾輪拉近欣賞細節 · Shift+拖曳連續鋪路
-            </span>
-            {hoveredTileInfo && (
-              <span className="font-mono-num text-emerald-200 hidden sm:inline">
-                ({hoveredTileInfo.x + 1},{hoveredTileInfo.y + 1})
+        <div className="absolute bottom-2.5 left-2.5 right-2.5 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-20">
+          <div className="flex items-center gap-1.5 pointer-events-auto">
+            <div className="hidden md:flex px-3 py-1.5 rounded-xl bg-[#1A2B20]/85 text-white text-[11px] items-center gap-2">
+              <Compass className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+              <span className="whitespace-nowrap">
+                左鍵點擊地塊/動物/遊客互動 · 拖曳旋轉 · 右鍵平移 · 滾輪拉近欣賞細節 · Shift+拖曳連續鋪路
               </span>
+              {hoveredTileInfo && (
+                <span className="font-mono-num text-emerald-200">
+                  ({hoveredTileInfo.x + 1},{hoveredTileInfo.y + 1})
+                </span>
+              )}
+            </div>
+
+            {activeTool.startsWith('floor_') && (
+              <button
+                type="button"
+                onClick={() => setTouchPaintMode((v) => !v)}
+                className={`lg:hidden min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shadow-xs ${
+                  touchPaintMode
+                    ? 'bg-[#059669] text-white'
+                    : 'bg-[#1A2B20]/85 text-white'
+                }`}
+              >
+                <Paintbrush className="w-3.5 h-3.5" />
+                <span>{touchPaintMode ? '連續滑動鋪路：開' : '滑動連續鋪路'}</span>
+              </button>
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 pointer-events-auto">
+          <div className="flex items-center gap-1.5 pointer-events-auto ml-auto">
             <button
               type="button"
               onClick={() => handleSetCameraPreset('iso')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+              className={`min-h-[38px] lg:min-h-0 px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
                 cameraPreset === 'iso'
                   ? 'bg-[#059669] text-white'
                   : 'bg-[#1A2B20]/85 text-white hover:bg-[#1A2B20]'
@@ -2544,7 +2961,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <button
               type="button"
               onClick={() => handleSetCameraPreset('top')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+              className={`min-h-[38px] lg:min-h-0 px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
                 cameraPreset === 'top'
                   ? 'bg-[#059669] text-white'
                   : 'bg-[#1A2B20]/85 text-white hover:bg-[#1A2B20]'
@@ -2556,7 +2973,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <button
               type="button"
               onClick={onEnterPhotoMode}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap bg-amber-500 hover:bg-amber-600 text-white shadow-xs"
+              className="min-h-[38px] lg:min-h-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap bg-amber-500 hover:bg-amber-600 text-white shadow-xs"
               title="切換至第一人稱視角自由遊覽並拍攝高畫質照片"
             >
               <Camera className="w-3.5 h-3.5" />
@@ -2570,7 +2987,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       {photoMode && (
         <>
           {/* Subtle Camera Frame Corners */}
-          <div className="absolute inset-6 pointer-events-none z-20">
+          <div className="absolute inset-4 sm:inset-6 pointer-events-none z-20">
             <div className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-white/65" />
             <div className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-white/65" />
             <div className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-white/65" />
@@ -2578,9 +2995,9 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
           </div>
 
           {/* Top-Left Minimal Mode Badge & Top-Right Exit Button */}
-          <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-20">
+          <div className="absolute top-4 left-4 right-4 flex items-center justify-between gap-2 pointer-events-none z-20">
             <div className="px-3 py-1.5 rounded-lg bg-black/55 text-white text-xs flex items-center gap-2 pointer-events-auto">
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-rose-500" />
               <span className="font-semibold">第一人稱攝影模式</span>
               <span className="text-white/75 hidden sm:inline">
                 · WASD/方向鍵移動 · 拖曳旋轉視角 · Q/E 調整高度 · 滾輪變焦
@@ -2590,20 +3007,71 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <button
               type="button"
               onClick={onExitPhotoMode}
-              className="px-3 py-1.5 rounded-lg bg-black/65 hover:bg-black/85 text-white text-xs font-semibold flex items-center gap-1.5 pointer-events-auto cursor-pointer transition-colors"
+              className="min-h-[40px] px-3 py-1.5 rounded-lg bg-black/65 hover:bg-black/85 text-white text-xs font-semibold flex items-center gap-1.5 pointer-events-auto cursor-pointer transition-colors"
             >
               <X className="w-3.5 h-3.5" />
-              <span>退出攝影 (Esc)</span>
+              <span>退出攝影</span>
+            </button>
+          </div>
+
+          {/* Mobile Touch D-Pad for First-Person Movement */}
+          <div className="md:hidden absolute bottom-20 left-4 grid grid-cols-3 gap-1.5 z-20 touch-none select-none">
+            <div />
+            <button
+              type="button"
+              aria-label="向前移動"
+              onPointerDown={() => setFpKeyRef.current?.('KeyW', true)}
+              onPointerUp={() => setFpKeyRef.current?.('KeyW', false)}
+              onPointerLeave={() => setFpKeyRef.current?.('KeyW', false)}
+              onPointerCancel={() => setFpKeyRef.current?.('KeyW', false)}
+              className="w-11 h-11 rounded-xl bg-black/60 active:bg-emerald-600/80 text-white flex items-center justify-center border border-white/20"
+            >
+              <ArrowUp className="w-4 h-4" />
+            </button>
+            <div />
+            <button
+              type="button"
+              aria-label="向左移動"
+              onPointerDown={() => setFpKeyRef.current?.('KeyA', true)}
+              onPointerUp={() => setFpKeyRef.current?.('KeyA', false)}
+              onPointerLeave={() => setFpKeyRef.current?.('KeyA', false)}
+              onPointerCancel={() => setFpKeyRef.current?.('KeyA', false)}
+              className="w-11 h-11 rounded-xl bg-black/60 active:bg-emerald-600/80 text-white flex items-center justify-center border border-white/20"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="向後移動"
+              onPointerDown={() => setFpKeyRef.current?.('KeyS', true)}
+              onPointerUp={() => setFpKeyRef.current?.('KeyS', false)}
+              onPointerLeave={() => setFpKeyRef.current?.('KeyS', false)}
+              onPointerCancel={() => setFpKeyRef.current?.('KeyS', false)}
+              className="w-11 h-11 rounded-xl bg-black/60 active:bg-emerald-600/80 text-white flex items-center justify-center border border-white/20"
+            >
+              <ArrowDown className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="向右移動"
+              onPointerDown={() => setFpKeyRef.current?.('KeyD', true)}
+              onPointerUp={() => setFpKeyRef.current?.('KeyD', false)}
+              onPointerLeave={() => setFpKeyRef.current?.('KeyD', false)}
+              onPointerCancel={() => setFpKeyRef.current?.('KeyD', false)}
+              className="w-11 h-11 rounded-xl bg-black/60 active:bg-emerald-600/80 text-white flex items-center justify-center border border-white/20"
+            >
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
 
           {/* Bottom-Center Shutter & Lens Bar */}
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-black/65 text-white z-20">
+          <div className="absolute bottom-4 sm:bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-2xl bg-black/65 text-white z-20">
             <button
               type="button"
               onClick={() => adjustFovRef.current?.(5)}
               title="廣角拉遠"
-              className="p-1.5 rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
+              aria-label="廣角拉遠"
+              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
@@ -2614,7 +3082,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
               type="button"
               onClick={() => adjustFovRef.current?.(-5)}
               title="望遠拉近"
-              className="p-1.5 rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
+              aria-label="望遠拉近"
+              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
@@ -2624,11 +3093,11 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <button
               type="button"
               onClick={() => captureFnRef.current?.()}
-              className="px-4 py-2 rounded-xl bg-white text-[#1A2B20] hover:bg-amber-100 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl bg-white text-[#1A2B20] hover:bg-amber-100 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
               title="拍攝高畫質 PNG 照片 (Enter)"
             >
               <Camera className="w-4 h-4 text-emerald-700" />
-              <span>拍攝高畫質照片</span>
+              <span>拍攝照片</span>
             </button>
           </div>
 

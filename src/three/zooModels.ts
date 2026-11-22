@@ -847,6 +847,10 @@ export function buildFacilityMesh(
     paving.rotation.x = -Math.PI / 2;
     paving.position.y = 0.008;
     paving.receiveShadow = true;
+    paving.userData.isRoadSurface = true;
+    paving.userData.baseRoughness = mat.roughness;
+    paving.userData.baseMetalness = mat.metalness;
+    paving.userData.baseColorHex = connected ? '#FFFFFF' : '#B8B0A4';
     group.add(paving);
 
     // Wood boardwalk adds subtle side timber runner trim
@@ -869,6 +873,10 @@ export function buildFacilityMesh(
     plaza.rotation.x = -Math.PI / 2;
     plaza.position.y = 0.009;
     plaza.receiveShadow = true;
+    plaza.userData.isRoadSurface = true;
+    plaza.userData.baseRoughness = plazaMat.roughness;
+    plaza.userData.baseMetalness = plazaMat.metalness;
+    plaza.userData.baseColorHex = '#FFFFFF';
     group.add(plaza);
 
     const concreteMat = getStdMat('#D6D9DD', 0.68, 0.08);

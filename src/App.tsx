@@ -1,8 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ClipboardList,
+  Compass,
+  Hammer,
+  Sparkles,
+  Timer,
+  Utensils,
+  X,
+} from 'lucide-react';
 import { BuildToolbar } from './components/BuildToolbar';
 import { EndGameModal } from './components/EndGameModal';
 import { InspectorPanel } from './components/InspectorPanel';
+import {
+  OfflineRewardModal,
+  OfflineRewardSummary,
+} from './components/OfflineRewardModal';
 import { ParkCanvas3D } from './components/ParkCanvas3D';
+import {
+  PomodoroMode,
+  PomodoroPanel,
+  formatPomodoroTime,
+} from './components/PomodoroPanel';
 import { SaveLoadModal } from './components/SaveLoadModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
@@ -59,12 +77,13 @@ import {
   pickRandomSeasonalEvent,
   recomputeConnectivity,
 } from './utils/parkLogic';
-import { AmbientAudioMode, BgmTrackId, soundFX } from './utils/sound';
+import { AmbientAudioMode, BGM_TRACKS, BgmTrackId, soundFX } from './utils/sound';
 import {
   SAVE_SLOT_DEFAULT_NAMES,
   SaveSlotId,
   ZooSaveSlotSummary,
   deleteSaveSlot,
+  formatSaveTimestamp,
   getLatestSaveSummary,
   listSaveSlots,
   loadZooFromSlot,
@@ -72,6 +91,215 @@ import {
 } from './utils/saveSystem';
 
 const TICKS_PER_DAY = 36;
+const POMODORO_STORAGE_KEY = 'forest_ark_pomodoro_v1';
+const OFFLINE_CLAIMED_STORAGE_KEY = 'forest_ark_offline_claimed_v1';
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_OFFLINE_REWARD_DAYS = 30;
+
+const WEATHER_VISUAL_FEEDBACK: Record<
+  WeatherType,
+  {
+    pageBgDay: string;
+    pageBgNight: string;
+    ambientGlowClass: string;
+    stageFrameClass: string;
+    badgeClass: string;
+    effectLabel: string;
+    transitionPopup: string;
+  }
+> = {
+  sunny: {
+    pageBgDay: 'bg-[#F4F2EC]',
+    pageBgNight: 'bg-[#EAE9E4]',
+    ambientGlowClass: 'from-amber-200/20 via-transparent to-transparent',
+    stageFrameClass: '',
+    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+    effectLabel: '晴朗暖陽 · 自然光影',
+    transitionPopup: '晴朗好天氣',
+  },
+  breezy: {
+    pageBgDay: 'bg-[#EBF4F0]',
+    pageBgNight: 'bg-[#E2ECEA]',
+    ambientGlowClass: 'from-teal-200/22 via-transparent to-cyan-100/12',
+    stageFrameClass: 'ring-1 ring-teal-500/20 shadow-[0_8px_24px_rgba(13,148,136,0.08)]',
+    badgeClass: 'bg-teal-50 text-teal-800 border-teal-200',
+    effectLabel: '涼爽微風 · 草浪搖曳氣流',
+    transitionPopup: '涼爽微風吹拂',
+  },
+  rainy: {
+    pageBgDay: 'bg-[#E5EDF2]',
+    pageBgNight: 'bg-[#DCE5EC]',
+    ambientGlowClass: 'from-sky-300/24 via-slate-200/12 to-sky-200/16',
+    stageFrameClass: 'ring-1 ring-sky-500/25 shadow-[0_10px_28px_rgba(30,64,100,0.12)]',
+    badgeClass: 'bg-sky-50 text-sky-800 border-sky-200',
+    effectLabel: '梅雨季 · 路面水窪倒影與漣漪',
+    transitionPopup: '梅雨季 · 路面水窪倒影',
+  },
+  heatwave: {
+    pageBgDay: 'bg-[#F8EFE2]',
+    pageBgNight: 'bg-[#EFE3D3]',
+    ambientGlowClass: 'from-amber-300/26 via-orange-200/12 to-amber-200/18',
+    stageFrameClass: 'ring-1 ring-amber-500/30 shadow-[0_10px_30px_rgba(217,119,6,0.14)]',
+    badgeClass: 'bg-orange-50 text-orange-800 border-orange-200',
+    effectLabel: '高溫熱浪 · 空氣扭曲 (heat-mirage)',
+    transitionPopup: '高溫熱浪 · 空氣扭曲特效',
+  },
+};
+
+function countElapsedDays(prevTs: number, nowTs: number): number {
+  if (!Number.isFinite(prevTs) || prevTs <= 0 || nowTs <= prevTs) return 0;
+  const prevDate = new Date(prevTs);
+  const nowDate = new Date(nowTs);
+  const prevMidnight = new Date(
+    prevDate.getFullYear(),
+    prevDate.getMonth(),
+    prevDate.getDate()
+  ).getTime();
+  const nowMidnight = new Date(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate()
+  ).getTime();
+  const calendarDays = Math.round((nowMidnight - prevMidnight) / MS_PER_DAY);
+  const exactDays = Math.floor((nowTs - prevTs) / MS_PER_DAY);
+  return Math.max(calendarDays, exactDays);
+}
+
+function computeOfflineReward(
+  parkGrid: ParkTile[][],
+  ticketPriceVal: number,
+  parkStats: ParkStats,
+  lastSavedAt: number,
+  nowTs: number
+): OfflineRewardSummary | null {
+  const elapsedDays = countElapsedDays(lastSavedAt, nowTs);
+  if (elapsedDays < 1) return null;
+
+  let animalCount = 0;
+  const speciesSet = new Set<SpeciesId>();
+  for (let y = 0; y < parkGrid.length; y++) {
+    for (let x = 0; x < parkGrid[y].length; x++) {
+      const hab = parkGrid[y][x].habitat;
+      if (!hab || hab.animals.length === 0) continue;
+      animalCount += hab.animals.length;
+      speciesSet.add(hab.speciesId);
+    }
+  }
+
+  const recordedDailyRevenue = Math.max(
+    parkStats.dailyRevenue || 0,
+    parkStats.lastDayRevenue || 0
+  );
+  if (animalCount <= 0 && recordedDailyRevenue <= 0) return null;
+
+  const effectiveDays = Math.min(MAX_OFFLINE_REWARD_DAYS, elapsedDays);
+  const dailyRevenue =
+    recordedDailyRevenue > 0
+      ? Math.round(recordedDailyRevenue)
+      : Math.round(Math.max(1, animalCount) * ticketPriceVal * 1.5);
+  const revenuePartPerDay = Math.round(dailyRevenue * 0.45);
+  const animalPartPerDay = animalCount * 22;
+  const perDayReward = Math.max(40, revenuePartPerDay + animalPartPerDay);
+  const totalReward = perDayReward * effectiveDays;
+
+  return {
+    elapsedDays,
+    effectiveDays,
+    dailyRevenue,
+    animalCount,
+    speciesCount: speciesSet.size,
+    revenuePartPerDay,
+    animalPartPerDay,
+    totalReward,
+    lastClosedLabel: formatSaveTimestamp(lastSavedAt),
+  };
+}
+
+function getOfflineClaimKey(slotId: SaveSlotId, savedAt: number): string {
+  return `${slotId}:${savedAt}`;
+}
+
+function hasClaimedOfflineReward(slotId: SaveSlotId, savedAt: number): boolean {
+  try {
+    const raw = window.localStorage.getItem(OFFLINE_CLAIMED_STORAGE_KEY);
+    if (!raw) return false;
+    const list = JSON.parse(raw) as unknown;
+    return Array.isArray(list) && list.includes(getOfflineClaimKey(slotId, savedAt));
+  } catch {
+    return false;
+  }
+}
+
+function markClaimedOfflineReward(slotId: SaveSlotId, savedAt: number): void {
+  try {
+    const key = getOfflineClaimKey(slotId, savedAt);
+    const raw = window.localStorage.getItem(OFFLINE_CLAIMED_STORAGE_KEY);
+    const prev = raw ? (JSON.parse(raw) as unknown) : [];
+    const list = Array.isArray(prev)
+      ? prev.filter((item): item is string => typeof item === 'string')
+      : [];
+    if (!list.includes(key)) {
+      const next = [key, ...list].slice(0, 24);
+      window.localStorage.setItem(OFFLINE_CLAIMED_STORAGE_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+interface StoredPomodoroPrefs {
+  dateStr: string;
+  completedPomodoros: number;
+  todayFocusMinutes: number;
+  focusMinutes: number;
+  shortBreakMinutes: number;
+  longBreakMinutes: number;
+  taskLabel: string;
+  autoStudyMusic: boolean;
+}
+
+function getTodayDateKey(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function loadPomodoroPrefs(): StoredPomodoroPrefs {
+  const today = getTodayDateKey();
+  const fallback: StoredPomodoroPrefs = {
+    dateStr: today,
+    completedPomodoros: 0,
+    todayFocusMinutes: 0,
+    focusMinutes: 25,
+    shortBreakMinutes: 5,
+    longBreakMinutes: 15,
+    taskLabel: '',
+    autoStudyMusic: true,
+  };
+  try {
+    const raw = window.localStorage.getItem(POMODORO_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<StoredPomodoroPrefs>;
+    const sameDay = parsed.dateStr === today;
+    return {
+      dateStr: today,
+      completedPomodoros:
+        sameDay && typeof parsed.completedPomodoros === 'number' ? parsed.completedPomodoros : 0,
+      todayFocusMinutes:
+        sameDay && typeof parsed.todayFocusMinutes === 'number' ? parsed.todayFocusMinutes : 0,
+      focusMinutes: typeof parsed.focusMinutes === 'number' ? parsed.focusMinutes : 25,
+      shortBreakMinutes:
+        typeof parsed.shortBreakMinutes === 'number' ? parsed.shortBreakMinutes : 5,
+      longBreakMinutes: typeof parsed.longBreakMinutes === 'number' ? parsed.longBreakMinutes : 15,
+      taskLabel: typeof parsed.taskLabel === 'string' ? parsed.taskLabel : '',
+      autoStudyMusic: typeof parsed.autoStudyMusic === 'boolean' ? parsed.autoStudyMusic : true,
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 function createEmptyVisitorTypeCounts(): Record<VisitorArchetype, number> {
   return {
@@ -810,6 +1038,41 @@ export default function App() {
   const photoAlbumCooldownRef = useRef<number>(0);
   const [saveModalOpen, setSaveModalOpen] = useState<boolean>(false);
   const [saveSlots, setSaveSlots] = useState<ZooSaveSlotSummary[]>(() => listSaveSlots());
+  const [offlineReward, setOfflineReward] = useState<OfflineRewardSummary | null>(null);
+  const lastHiddenAtRef = useRef<number | null>(null);
+
+  const [mobileTab, setMobileTab] = useState<'park' | 'build' | 'manage' | 'pomodoro'>('park');
+
+  const initialPomoPrefs = useMemo(() => loadPomodoroPrefs(), []);
+  const [pomodoroMode, setPomodoroMode] = useState<PomodoroMode>('focus');
+  const [pomodoroRunning, setPomodoroRunning] = useState<boolean>(false);
+  const [pomodoroFocusMins, setPomodoroFocusMins] = useState<number>(initialPomoPrefs.focusMinutes);
+  const [pomodoroShortMins, setPomodoroShortMins] = useState<number>(
+    initialPomoPrefs.shortBreakMinutes
+  );
+  const [pomodoroLongMins, setPomodoroLongMins] = useState<number>(
+    initialPomoPrefs.longBreakMinutes
+  );
+  const [pomodoroSecondsLeft, setPomodoroSecondsLeft] = useState<number>(
+    initialPomoPrefs.focusMinutes * 60
+  );
+  const [completedPomodoros, setCompletedPomodoros] = useState<number>(
+    initialPomoPrefs.completedPomodoros
+  );
+  const [todayFocusMinutes, setTodayFocusMinutes] = useState<number>(
+    initialPomoPrefs.todayFocusMinutes
+  );
+  const [pomodoroTaskLabel, setPomodoroTaskLabel] = useState<string>(initialPomoPrefs.taskLabel);
+  const [pomodoroAutoStudyMusic, setPomodoroAutoStudyMusic] = useState<boolean>(
+    initialPomoPrefs.autoStudyMusic
+  );
+  const [pomodoroModalOpen, setPomodoroModalOpen] = useState<boolean>(false);
+  const [pomodoroBanner, setPomodoroBanner] = useState<{
+    title: string;
+    subtitle: string;
+    nextMode: PomodoroMode;
+  } | null>(null);
+  const pomodoroEndAtRef = useRef<number | null>(null);
 
   const refreshSaveSlots = useCallback(() => {
     setSaveSlots(listSaveSlots());
@@ -870,8 +1133,10 @@ export default function App() {
       peakFunds: startingFunds,
       daysSurvived: 1,
       dailyRevenue: 0,
+      lastDayRevenue: 0,
       dailyExpenses: 0,
     });
+    setOfflineReward(null);
     setLogs([
       {
         id: nextId('log'),
@@ -2036,9 +2301,11 @@ export default function App() {
           nextUpcomingWeather = pickNextWeather(nextCurrWeather);
           nextWeatherDays = 2 + Math.floor(Math.random() * 3);
           const wSpec = WEATHERS[nextCurrWeather];
+          const wVisual = WEATHER_VISUAL_FEEDBACK[nextCurrWeather];
+          addPopup(GATE_POS.x, GATE_POS.y, wVisual.transitionPopup, nextCurrWeather === 'rainy' ? 'green' : nextCurrWeather === 'heatwave' ? 'amber' : 'gold');
           addLog(
             nextDay,
-            `天氣轉變為「${wSpec.name}」：${wSpec.careTip}`,
+            `天氣轉變為「${wSpec.name}」（${wVisual.effectLabel}）：${wSpec.careTip}`,
             nextCurrWeather === 'breezy' || nextCurrWeather === 'sunny' ? 'success' : 'warning'
           );
           if (nextCurrWeather === 'rainy') {
@@ -2223,6 +2490,7 @@ export default function App() {
         peakFunds: Math.max(prev.peakFunds, nextFunds),
         daysSurvived: nextDay,
         dailyRevenue: nextTick === 0 ? 0 : prev.dailyRevenue + dailyRevDelta,
+        lastDayRevenue: nextTick === 0 ? prev.dailyRevenue : prev.lastDayRevenue,
         dailyExpenses: dailyExp > 0 ? dailyExp : prev.dailyExpenses,
       }));
 
@@ -2262,6 +2530,7 @@ export default function App() {
             peakFunds: Math.max(s.stats.peakFunds, nextFunds),
             daysSurvived: nextDay,
             dailyRevenue: 0,
+            lastDayRevenue: s.stats.dailyRevenue,
             dailyExpenses: dailyExp > 0 ? dailyExp : s.stats.dailyExpenses,
           },
           logs: s.logs.slice(0, 20),
@@ -2889,39 +3158,88 @@ export default function App() {
     [refreshSaveSlots]
   );
 
-  const handleLoadSlot = useCallback((slotId: SaveSlotId) => {
-    const loaded = loadZooFromSlot(slotId);
-    if (!loaded) {
-      soundFX.playError();
-      return;
-    }
-    setDifficulty(loaded.difficulty);
-    setGrid(loaded.grid);
-    setFunds(loaded.funds);
-    setTicketPrice(loaded.ticketPrice);
-    setDay(loaded.day);
-    setTickInDay(loaded.tickInDay);
-    setWeather(loaded.weather);
-    setNextWeather(loaded.nextWeather);
-    setWeatherDaysLeft(loaded.weatherDaysLeft);
-    setSeasonalEvent(loaded.seasonalEvent);
-    setSeasonalDaysLeft(loaded.seasonalDaysLeft);
-    lastSeasonalRef.current = loaded.lastSeasonalEvent;
-    idleSeasonalDaysRef.current = loaded.idleSeasonalDays ?? 0;
-    weatherPopupKeyRef.current = {};
-    setVisitors(loaded.visitors);
-    setVisitorTypeCounts(loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts());
-    setCultivatedSpecies(
-      loaded.cultivatedSpecies ?? collectInitialCultivatedSpecies(loaded.grid)
-    );
-    setLandmarkUnlocked(Boolean(loaded.landmarkUnlocked));
-    setKeepers(loaded.keepers);
-    setCompletedMilestones(loaded.completedMilestones);
-    setVictoryDismissed(Boolean(loaded.victoryDismissed));
-    setNegativeFundDays(loaded.negativeFundDays ?? 0);
-    setStats(loaded.stats);
-    setLogs(
-      [
+  const saveAutosaveSilent = useCallback(
+    (overrideFunds?: number, overrideStats?: ParkStats, overrideLogs?: ParkLogEntry[]) => {
+      const s = simRef.current;
+      const finalFunds = overrideFunds ?? s.funds;
+      const finalStats = overrideStats ?? s.stats;
+      const finalLogs = overrideLogs ?? s.logs;
+      const ok = saveZooToSlot('autosave', {
+        label: `每日自動存檔 · 第 ${s.day} 天`,
+        difficulty: s.difficulty,
+        grid: s.grid,
+        funds: finalFunds,
+        ticketPrice: s.ticketPrice,
+        day: s.day,
+        tickInDay: s.tickInDay,
+        weather: s.weather,
+        nextWeather: s.nextWeather,
+        weatherDaysLeft: s.weatherDaysLeft,
+        seasonalEvent: s.seasonalEvent,
+        seasonalDaysLeft: s.seasonalDaysLeft,
+        lastSeasonalEvent: lastSeasonalRef.current,
+        idleSeasonalDays: idleSeasonalDaysRef.current,
+        visitors: s.visitors,
+        visitorTypeCounts: s.visitorTypeCounts,
+        cultivatedSpecies: s.cultivatedSpecies,
+        landmarkUnlocked: s.landmarkUnlocked,
+        keepers: s.keepers,
+        completedMilestones: s.completedMilestones,
+        victoryDismissed: s.victoryDismissed,
+        negativeFundDays: s.negativeFundDays,
+        stats: finalStats,
+        logs: finalLogs.slice(0, 20),
+        photoAlbum: s.photoAlbum,
+        bgmTrack: s.bgmTrack,
+        ratingSnapshot: s.metrics.rating,
+        animalCountSnapshot: s.metrics.totalAnimals,
+        speciesCountSnapshot: s.metrics.uniqueSpeciesCount,
+      });
+      if (ok) {
+        refreshSaveSlots();
+      }
+    },
+    [refreshSaveSlots]
+  );
+
+  const handleLoadSlot = useCallback(
+    (slotId: SaveSlotId) => {
+      const loaded = loadZooFromSlot(slotId);
+      if (!loaded) {
+        soundFX.playError();
+        return;
+      }
+
+      const nowTs = Date.now();
+      const reward = !hasClaimedOfflineReward(slotId, loaded.savedAt)
+        ? computeOfflineReward(loaded.grid, loaded.ticketPrice, loaded.stats, loaded.savedAt, nowTs)
+        : null;
+
+      if (reward) {
+        markClaimedOfflineReward(slotId, loaded.savedAt);
+      }
+
+      const nextFunds = reward ? loaded.funds + reward.totalReward : loaded.funds;
+      const nextStats: ParkStats = reward
+        ? {
+            ...loaded.stats,
+            peakFunds: Math.max(loaded.stats.peakFunds, nextFunds),
+          }
+        : loaded.stats;
+
+      const offlineLog: ParkLogEntry[] = reward
+        ? [
+            {
+              id: nextId('log'),
+              day: loaded.day,
+              message: `離線 ${reward.elapsedDays} 天期間園區持續營運，依每日收入 $${reward.dailyRevenue.toLocaleString()} 與 ${reward.animalCount} 隻動物發放經營獎勵 +$${reward.totalReward.toLocaleString()}！`,
+              tone: 'success' as const,
+            },
+          ]
+        : [];
+
+      const nextLogs = [
+        ...offlineLog,
         {
           id: nextId('log'),
           day: loaded.day,
@@ -2929,27 +3247,106 @@ export default function App() {
           tone: 'success' as const,
         },
         ...loaded.logs,
-      ].slice(0, 20)
-    );
-    setPhotoAlbum(Array.isArray(loaded.photoAlbum) ? loaded.photoAlbum : []);
-    setPendingPhotoCaptures([]);
-    photoAlbumCooldownRef.current = 0;
-    setPopups([]);
-    setSelectedVisitorId(null);
-    setSelectedPos({ x: 3, y: 4 });
-    setActiveTool('select');
-    setPhotoMode(false);
-    setSpeed(1);
-    if (loaded.bgmTrack) {
-      setBgmTrack(loaded.bgmTrack);
-      soundFX.setBgmTrack(loaded.bgmTrack);
-    }
-    setSaveModalOpen(false);
-    setGameState('PLAYING');
-    soundFX.unlock();
-    soundFX.startBgm();
-    soundFX.playMilestone();
-  }, []);
+      ].slice(0, 20);
+
+      setDifficulty(loaded.difficulty);
+      setGrid(loaded.grid);
+      setFunds(nextFunds);
+      setTicketPrice(loaded.ticketPrice);
+      setDay(loaded.day);
+      setTickInDay(loaded.tickInDay);
+      setWeather(loaded.weather);
+      setNextWeather(loaded.nextWeather);
+      setWeatherDaysLeft(loaded.weatherDaysLeft);
+      setSeasonalEvent(loaded.seasonalEvent);
+      setSeasonalDaysLeft(loaded.seasonalDaysLeft);
+      lastSeasonalRef.current = loaded.lastSeasonalEvent;
+      idleSeasonalDaysRef.current = loaded.idleSeasonalDays ?? 0;
+      weatherPopupKeyRef.current = {};
+      setVisitors(loaded.visitors);
+      setVisitorTypeCounts(loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts());
+      setCultivatedSpecies(
+        loaded.cultivatedSpecies ?? collectInitialCultivatedSpecies(loaded.grid)
+      );
+      setLandmarkUnlocked(Boolean(loaded.landmarkUnlocked));
+      setKeepers(loaded.keepers);
+      setCompletedMilestones(loaded.completedMilestones);
+      setVictoryDismissed(Boolean(loaded.victoryDismissed));
+      setNegativeFundDays(loaded.negativeFundDays ?? 0);
+      setStats(nextStats);
+      setLogs(nextLogs);
+      setPhotoAlbum(Array.isArray(loaded.photoAlbum) ? loaded.photoAlbum : []);
+      setPendingPhotoCaptures([]);
+      photoAlbumCooldownRef.current = 0;
+      setPopups([]);
+      setSelectedVisitorId(null);
+      setSelectedPos({ x: 3, y: 4 });
+      setActiveTool('select');
+      setPhotoMode(false);
+      setSpeed(1);
+      if (loaded.bgmTrack) {
+        setBgmTrack(loaded.bgmTrack);
+        soundFX.setBgmTrack(loaded.bgmTrack);
+      }
+      setSaveModalOpen(false);
+      setGameState('PLAYING');
+      lastHiddenAtRef.current = null;
+
+      if (reward) {
+        const avgMoodSnap =
+          loaded.visitors.length === 0
+            ? 84
+            : loaded.visitors.reduce((acc, v) => acc + v.mood, 0) / loaded.visitors.length;
+        const snapMetrics = computeParkMetrics(
+          loaded.grid,
+          loaded.ticketPrice,
+          loaded.weather,
+          avgMoodSnap
+        );
+        saveZooToSlot('autosave', {
+          label: `每日自動存檔 · 第 ${loaded.day} 天`,
+          difficulty: loaded.difficulty,
+          grid: loaded.grid,
+          funds: nextFunds,
+          ticketPrice: loaded.ticketPrice,
+          day: loaded.day,
+          tickInDay: loaded.tickInDay,
+          weather: loaded.weather,
+          nextWeather: loaded.nextWeather,
+          weatherDaysLeft: loaded.weatherDaysLeft,
+          seasonalEvent: loaded.seasonalEvent,
+          seasonalDaysLeft: loaded.seasonalDaysLeft,
+          lastSeasonalEvent: loaded.lastSeasonalEvent,
+          idleSeasonalDays: loaded.idleSeasonalDays ?? 0,
+          visitors: loaded.visitors,
+          visitorTypeCounts: loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts(),
+          cultivatedSpecies:
+            loaded.cultivatedSpecies ?? collectInitialCultivatedSpecies(loaded.grid),
+          landmarkUnlocked: Boolean(loaded.landmarkUnlocked),
+          keepers: loaded.keepers,
+          completedMilestones: loaded.completedMilestones,
+          victoryDismissed: Boolean(loaded.victoryDismissed),
+          negativeFundDays: loaded.negativeFundDays ?? 0,
+          stats: nextStats,
+          logs: nextLogs,
+          photoAlbum: Array.isArray(loaded.photoAlbum) ? loaded.photoAlbum : [],
+          bgmTrack: loaded.bgmTrack,
+          ratingSnapshot: snapMetrics.rating,
+          animalCountSnapshot: snapMetrics.totalAnimals,
+          speciesCountSnapshot: snapMetrics.uniqueSpeciesCount,
+        });
+        refreshSaveSlots();
+        setOfflineReward(reward);
+      } else {
+        setOfflineReward(null);
+      }
+
+      soundFX.unlock();
+      soundFX.startBgm();
+      soundFX.playMilestone();
+    },
+    [refreshSaveSlots]
+  );
 
   const handleDeleteSlot = useCallback(
     (slotId: SaveSlotId) => {
@@ -2965,6 +3362,239 @@ export default function App() {
       handleLoadSlot(latest.slotId);
     }
   }, [handleLoadSlot]);
+
+  const pomodoroTotalSeconds =
+    (pomodoroMode === 'focus'
+      ? pomodoroFocusMins
+      : pomodoroMode === 'shortBreak'
+      ? pomodoroShortMins
+      : pomodoroLongMins) * 60;
+
+  const pomodoroStateRef = useRef({
+    mode: pomodoroMode,
+    focusMins: pomodoroFocusMins,
+    shortMins: pomodoroShortMins,
+    longMins: pomodoroLongMins,
+    completed: completedPomodoros,
+    todayMins: todayFocusMinutes,
+    secondsLeft: pomodoroSecondsLeft,
+  });
+  pomodoroStateRef.current = {
+    mode: pomodoroMode,
+    focusMins: pomodoroFocusMins,
+    shortMins: pomodoroShortMins,
+    longMins: pomodoroLongMins,
+    completed: completedPomodoros,
+    todayMins: todayFocusMinutes,
+    secondsLeft: pomodoroSecondsLeft,
+  };
+
+  // Persist Pomodoro preferences & daily completion stats
+  useEffect(() => {
+    try {
+      const payload: StoredPomodoroPrefs = {
+        dateStr: getTodayDateKey(),
+        completedPomodoros,
+        todayFocusMinutes,
+        focusMinutes: pomodoroFocusMins,
+        shortBreakMinutes: pomodoroShortMins,
+        longBreakMinutes: pomodoroLongMins,
+        taskLabel: pomodoroTaskLabel,
+        autoStudyMusic: pomodoroAutoStudyMusic,
+      };
+      window.localStorage.setItem(POMODORO_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [
+    completedPomodoros,
+    todayFocusMinutes,
+    pomodoroFocusMins,
+    pomodoroShortMins,
+    pomodoroLongMins,
+    pomodoroTaskLabel,
+    pomodoroAutoStudyMusic,
+  ]);
+
+  // Date.now()-anchored Pomodoro countdown (drift-free across background tabs)
+  useEffect(() => {
+    if (!pomodoroRunning) return;
+    if (!pomodoroEndAtRef.current) {
+      pomodoroEndAtRef.current = Date.now() + pomodoroStateRef.current.secondsLeft * 1000;
+    }
+
+    const interval = window.setInterval(() => {
+      const endAt = pomodoroEndAtRef.current;
+      if (!endAt) return;
+      const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      setPomodoroSecondsLeft(remaining);
+
+      if (remaining <= 0) {
+        pomodoroEndAtRef.current = null;
+        setPomodoroRunning(false);
+        const cur = pomodoroStateRef.current;
+        if (cur.mode === 'focus') {
+          soundFX.playPomodoroChime('focus_done');
+          const nextCompleted = cur.completed + 1;
+          const nextTodayMins = cur.todayMins + cur.focusMins;
+          setCompletedPomodoros(nextCompleted);
+          setTodayFocusMinutes(nextTodayMins);
+          const nextMode: PomodoroMode = nextCompleted % 4 === 0 ? 'longBreak' : 'shortBreak';
+          const nextMins = nextMode === 'longBreak' ? cur.longMins : cur.shortMins;
+          setPomodoroMode(nextMode);
+          setPomodoroSecondsLeft(nextMins * 60);
+          setPomodoroBanner({
+            title: '專注讀書完成！',
+            subtitle:
+              nextMode === 'longBreak'
+                ? `已完成第 ${nextCompleted} 顆番茄，推薦進行 ${cur.longMins} 分鐘長休息。`
+                : `已完成第 ${nextCompleted} 顆番茄，起來伸展休息 ${cur.shortMins} 分鐘吧。`,
+            nextMode,
+          });
+        } else {
+          soundFX.playPomodoroChime('break_done');
+          setPomodoroMode('focus');
+          setPomodoroSecondsLeft(cur.focusMins * 60);
+          setPomodoroBanner({
+            title: '休息時間結束',
+            subtitle: `準備好開始下一輪 ${cur.focusMins} 分鐘專注讀書了嗎？`,
+            nextMode: 'focus',
+          });
+        }
+      }
+    }, 450);
+
+    return () => window.clearInterval(interval);
+  }, [pomodoroRunning]);
+
+  // Keep browser tab title showing live Pomodoro countdown while running
+  useEffect(() => {
+    if (pomodoroRunning) {
+      const label = pomodoroMode === 'focus' ? '專注讀書' : '休息中';
+      document.title = `${formatPomodoroTime(pomodoroSecondsLeft)} ${label} · 森之方舟動物園`;
+    } else {
+      document.title = '森之方舟動物園 — 生態園區經營遊戲';
+    }
+  }, [pomodoroRunning, pomodoroSecondsLeft, pomodoroMode]);
+
+  const ensureStudyMusicPlaying = useCallback(() => {
+    if (!pomodoroAutoStudyMusic) return;
+    const isStudyTrack = BGM_TRACKS.some(
+      (track) => track.id === bgmTrack && track.category === '專注讀書'
+    );
+    if (!isStudyTrack) {
+      setBgmTrack('study_lofi_desk');
+      soundFX.setBgmTrack('study_lofi_desk');
+    }
+    if (bgmMuted) {
+      setBgmMuted(false);
+      soundFX.setBgmMuted(false);
+    }
+    soundFX.unlock();
+    soundFX.startBgm();
+  }, [bgmMuted, bgmTrack, pomodoroAutoStudyMusic]);
+
+  const handleTogglePomodoroRun = useCallback(() => {
+    soundFX.unlock();
+    setPomodoroBanner(null);
+    if (pomodoroRunning) {
+      if (pomodoroEndAtRef.current) {
+        const rem = Math.max(0, Math.ceil((pomodoroEndAtRef.current - Date.now()) / 1000));
+        setPomodoroSecondsLeft(rem);
+      }
+      pomodoroEndAtRef.current = null;
+      setPomodoroRunning(false);
+    } else {
+      if (pomodoroMode === 'focus') {
+        ensureStudyMusicPlaying();
+      }
+      const secs = pomodoroSecondsLeft > 0 ? pomodoroSecondsLeft : pomodoroTotalSeconds;
+      setPomodoroSecondsLeft(secs);
+      pomodoroEndAtRef.current = Date.now() + secs * 1000;
+      setPomodoroRunning(true);
+    }
+  }, [
+    ensureStudyMusicPlaying,
+    pomodoroMode,
+    pomodoroRunning,
+    pomodoroSecondsLeft,
+    pomodoroTotalSeconds,
+  ]);
+
+  const handleResetPomodoro = useCallback(() => {
+    pomodoroEndAtRef.current = null;
+    setPomodoroRunning(false);
+    setPomodoroSecondsLeft(pomodoroTotalSeconds);
+  }, [pomodoroTotalSeconds]);
+
+  const handleSelectPomodoroMode = useCallback(
+    (nextMode: PomodoroMode) => {
+      pomodoroEndAtRef.current = null;
+      setPomodoroRunning(false);
+      setPomodoroBanner(null);
+      setPomodoroMode(nextMode);
+      const mins =
+        nextMode === 'focus'
+          ? pomodoroFocusMins
+          : nextMode === 'shortBreak'
+          ? pomodoroShortMins
+          : pomodoroLongMins;
+      setPomodoroSecondsLeft(mins * 60);
+    },
+    [pomodoroFocusMins, pomodoroShortMins, pomodoroLongMins]
+  );
+
+  const handleSkipPomodoroPhase = useCallback(() => {
+    const nextMode: PomodoroMode =
+      pomodoroMode === 'focus'
+        ? (completedPomodoros + 1) % 4 === 0
+          ? 'longBreak'
+          : 'shortBreak'
+        : 'focus';
+    handleSelectPomodoroMode(nextMode);
+  }, [completedPomodoros, handleSelectPomodoroMode, pomodoroMode]);
+
+  const handleSelectPomodoroPreset = useCallback(
+    (targetMode: PomodoroMode, minutes: number) => {
+      if (targetMode === 'focus') setPomodoroFocusMins(minutes);
+      else if (targetMode === 'shortBreak') setPomodoroShortMins(minutes);
+      else setPomodoroLongMins(minutes);
+
+      if (targetMode === pomodoroMode) {
+        pomodoroEndAtRef.current = null;
+        setPomodoroRunning(false);
+        setPomodoroSecondsLeft(minutes * 60);
+      }
+    },
+    [pomodoroMode]
+  );
+
+  const handleStartNextFromBanner = useCallback(() => {
+    if (!pomodoroBanner) return;
+    const nextMode = pomodoroBanner.nextMode;
+    setPomodoroBanner(null);
+    soundFX.unlock();
+    if (nextMode === 'focus') {
+      ensureStudyMusicPlaying();
+    }
+    const mins =
+      nextMode === 'focus'
+        ? pomodoroFocusMins
+        : nextMode === 'shortBreak'
+        ? pomodoroShortMins
+        : pomodoroLongMins;
+    const secs = mins * 60;
+    setPomodoroMode(nextMode);
+    setPomodoroSecondsLeft(secs);
+    pomodoroEndAtRef.current = Date.now() + secs * 1000;
+    setPomodoroRunning(true);
+  }, [
+    ensureStudyMusicPlaying,
+    pomodoroBanner,
+    pomodoroFocusMins,
+    pomodoroLongMins,
+    pomodoroShortMins,
+  ]);
 
   const selectedTile = selectedPos ? grid[selectedPos.y]?.[selectedPos.x] ?? null : null;
   const isNight = tickInDay >= 18;
@@ -3018,6 +3648,57 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [gameState, speed]);
 
+  // Auto-save when closing/leaving app & award offline income if resuming from background on a new day
+  useEffect(() => {
+    if (gameState !== 'PLAYING') return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAtRef.current = Date.now();
+        saveAutosaveSilent();
+      } else if (document.visibilityState === 'visible' && lastHiddenAtRef.current) {
+        const nowTs = Date.now();
+        const hiddenAt = lastHiddenAtRef.current;
+        lastHiddenAtRef.current = null;
+        const s = simRef.current;
+        const reward = computeOfflineReward(s.grid, s.ticketPrice, s.stats, hiddenAt, nowTs);
+        if (reward) {
+          const nextFundsVal = s.funds + reward.totalReward;
+          const nextStatsVal: ParkStats = {
+            ...s.stats,
+            peakFunds: Math.max(s.stats.peakFunds, nextFundsVal),
+          };
+          const logEntry: ParkLogEntry = {
+            id: nextId('log'),
+            day: s.day,
+            message: `離線 ${reward.elapsedDays} 天期間園區持續營運，依每日收入 $${reward.dailyRevenue.toLocaleString()} 與 ${reward.animalCount} 隻動物發放經營獎勵 +$${reward.totalReward.toLocaleString()}！`,
+            tone: 'success',
+          };
+          const nextLogsVal = [logEntry, ...s.logs].slice(0, 20);
+          setFunds(nextFundsVal);
+          setStats(nextStatsVal);
+          setLogs(nextLogsVal);
+          addPopup(GATE_POS.x, GATE_POS.y, `離線獎勵 +$${reward.totalReward}`, 'gold');
+          saveAutosaveSilent(nextFundsVal, nextStatsVal, nextLogsVal);
+          setOfflineReward(reward);
+          soundFX.playMilestone();
+        }
+      }
+    };
+
+    const handlePageHide = () => {
+      lastHiddenAtRef.current = Date.now();
+      saveAutosaveSilent();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [addPopup, gameState, saveAutosaveSilent]);
+
   const latestSaveSummary = useMemo(() => {
     if (saveSlots.length === 0) return null;
     return saveSlots.reduce(
@@ -3026,12 +3707,18 @@ export default function App() {
     );
   }, [saveSlots]);
 
+  const titleOfflineDays = useMemo(() => {
+    if (!latestSaveSummary) return 0;
+    return countElapsedDays(latestSaveSummary.savedAt, Date.now());
+  }, [latestSaveSummary]);
+
   if (gameState === 'TITLE_MENU') {
     return (
       <>
         <TitleScreen
           onStartGame={startNewGame}
           latestSave={latestSaveSummary}
+          offlineDays={titleOfflineDays}
           hasAnySave={saveSlots.length > 0}
           onContinueLatestSave={handleContinueLatestSave}
           onOpenSaveModal={() => {
@@ -3053,8 +3740,26 @@ export default function App() {
     );
   }
 
+  const selectedVisitorObj = selectedVisitorId
+    ? visitors.find((v) => v.id === selectedVisitorId) ?? null
+    : null;
+  const weatherVisual = WEATHER_VISUAL_FEEDBACK[weather];
+
   return (
-    <div className="min-h-screen bg-[#F4F2EC] text-[#1A2B20] flex flex-col">
+    <div
+      data-weather={weather}
+      data-night={isNight ? 'true' : 'false'}
+      className={`relative min-h-screen text-[#1A2B20] flex flex-col transition-colors duration-700 ${
+        isNight ? weatherVisual.pageBgNight : weatherVisual.pageBgDay
+      }`}
+    >
+      {!photoMode && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-0 z-0 bg-gradient-to-b ${weatherVisual.ambientGlowClass} transition-opacity duration-700`}
+        />
+      )}
+      <div className={photoMode ? 'contents' : 'relative z-[1] flex-1 flex flex-col'}>
       {!photoMode && (
         <TopHud
           funds={funds}
@@ -3074,6 +3779,16 @@ export default function App() {
           rainMode={rainMode}
           windMode={windMode}
           thunderMode={thunderMode}
+          pomodoroMode={pomodoroMode}
+          pomodoroRunning={pomodoroRunning}
+          pomodoroSecondsLeft={pomodoroSecondsLeft}
+          onOpenPomodoro={() => {
+            if (window.innerWidth < 1024) {
+              setMobileTab('pomodoro');
+            } else {
+              setPomodoroModalOpen(true);
+            }
+          }}
           onChangeSpeed={setSpeed}
           onToggleMute={handleToggleMute}
           onToggleBgm={handleToggleBgm}
@@ -3087,6 +3802,7 @@ export default function App() {
             setSaveModalOpen(true);
           }}
           onReturnTitle={() => {
+            saveAutosaveSilent();
             refreshSaveSlots();
             setGameState('TITLE_MENU');
           }}
@@ -3097,7 +3813,7 @@ export default function App() {
         className={
           photoMode
             ? 'fixed inset-0 z-40 w-screen h-screen m-0 p-0 bg-black'
-            : 'flex-1 w-full max-w-[1440px] mx-auto p-3 sm:p-4 lg:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start'
+            : 'flex-1 w-full max-w-[1440px] mx-auto p-2.5 sm:p-4 lg:p-5 pb-24 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 items-start'
         }
       >
         {/* Left/Center Workspace: Build Toolbar + 3D Park Viewport */}
@@ -3105,7 +3821,7 @@ export default function App() {
           className={
             photoMode
               ? 'w-full h-full'
-              : 'lg:col-span-8 xl:col-span-8 flex flex-col gap-3'
+              : `${mobileTab === 'park' ? 'flex' : 'hidden lg:flex'} lg:col-span-8 xl:col-span-8 flex-col gap-2.5 lg:gap-3`
           }
         >
           {!photoMode && (
@@ -3117,49 +3833,174 @@ export default function App() {
                 VISITOR_ARCHETYPE_IDS.filter((id) => (visitorTypeCounts[id] || 0) > 0).length
               }
               totalVisitorTypes={VISITOR_ARCHETYPE_IDS.length}
+              mobileExpanded={false}
+              onOpenBuildPicker={() => setMobileTab('build')}
               onSelectTool={setActiveTool}
             />
           )}
 
-          <ParkCanvas3D
-            key="park-canvas-3d"
-            grid={grid}
-            weather={weather}
-            seasonalEvent={seasonalEvent}
-            isNight={isNight}
-            avgVisitorMood={avgVisitorMood}
-            speed={speed}
-            photoMode={photoMode}
-            activeTool={activeTool}
-            selectedPos={selectedPos}
-            selectedVisitorId={selectedVisitorId}
-            visitors={visitors}
-            keepers={keepers}
-            popups={popups}
-            pendingPhotoCaptures={pendingPhotoCaptures}
-            onPhotoCaptured={handlePhotoCaptured}
-            onTileClick={(x, y) => handleBuildAt(x, y, false)}
-            onTilePaintDrag={(x, y) => handleBuildAt(x, y, true)}
-            onSelectVisitor={handleSelectVisitor}
-            onEnterPhotoMode={() => setPhotoMode(true)}
-            onExitPhotoMode={() => setPhotoMode(false)}
-          />
+          <div
+            className={
+              photoMode
+                ? 'w-full h-full'
+                : `rounded-2xl transition-shadow duration-700 ${weatherVisual.stageFrameClass}`
+            }
+          >
+            <ParkCanvas3D
+              key="park-canvas-3d"
+              grid={grid}
+              weather={weather}
+              seasonalEvent={seasonalEvent}
+              isNight={isNight}
+              avgVisitorMood={avgVisitorMood}
+              speed={speed}
+              photoMode={photoMode}
+              activeTool={activeTool}
+              selectedPos={selectedPos}
+              selectedVisitorId={selectedVisitorId}
+              visitors={visitors}
+              keepers={keepers}
+              popups={popups}
+              pendingPhotoCaptures={pendingPhotoCaptures}
+              onPhotoCaptured={handlePhotoCaptured}
+              onTileClick={(x, y) => handleBuildAt(x, y, false)}
+              onTilePaintDrag={(x, y) => handleBuildAt(x, y, true)}
+              onSelectVisitor={handleSelectVisitor}
+              onEnterPhotoMode={() => setPhotoMode(true)}
+              onExitPhotoMode={() => setPhotoMode(false)}
+            />
+          </div>
+
+          {/* Mobile Quick Selection Action Bar (shown beneath 3D canvas on < lg) */}
+          {!photoMode && (
+            <div className="lg:hidden bg-white border border-[#E2DDD3] rounded-xl p-2.5 shadow-xs">
+              {selectedVisitorObj ? (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-[#1A2B20] truncate">
+                      {selectedVisitorObj.name} · {selectedVisitorObj.archetypeLabel}
+                    </p>
+                    <p className="text-[11px] text-[#5B6D60] truncate">
+                      {selectedVisitorObj.thought || `心情 ${Math.round(selectedVisitorObj.mood)}%`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('manage')}
+                    className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#1A2B20] text-white text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    查看檔案 →
+                  </button>
+                </div>
+              ) : selectedTile && selectedTile.type === 'habitat' && selectedTile.habitat ? (
+                (() => {
+                  const hab = selectedTile.habitat!;
+                  const spec = ANIMAL_SPECIES[hab.speciesId];
+                  return (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-[#1A2B20] truncate">
+                          {spec.zoneName} · {hab.animals.length}/{getHabitatCapacity(hab.level)} 隻
+                        </p>
+                        <p className="text-[11px] text-[#5B6D60] font-mono-num">
+                          清潔度 {Math.round(hab.cleanliness)}% · 點擊右側照護或管理
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleFeedHabitat(selectedTile.x, selectedTile.y)}
+                          disabled={hab.animals.length === 0 || funds < FACILITY_COSTS.feed}
+                          aria-label="餵食動物"
+                          className="min-h-[40px] px-2.5 py-1.5 rounded-lg border border-[#E2DDD3] bg-[#FAF9F5] disabled:opacity-45 text-xs font-semibold text-[#1A2B20] flex items-center gap-1 cursor-pointer"
+                        >
+                          <Utensils className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>餵食</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCleanHabitat(selectedTile.x, selectedTile.y)}
+                          disabled={funds < FACILITY_COSTS.clean}
+                          aria-label="清潔展區"
+                          className="min-h-[40px] px-2.5 py-1.5 rounded-lg border border-[#E2DDD3] bg-[#FAF9F5] disabled:opacity-45 text-xs font-semibold text-[#1A2B20] flex items-center gap-1 cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-sky-700" />
+                          <span>清潔</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMobileTab('manage')}
+                          className="min-h-[40px] px-2.5 py-1.5 rounded-lg bg-[#059669] text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
+                        >
+                          管理
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div className="flex items-center justify-between gap-2 text-xs text-[#5B6D60]">
+                  <span className="truncate">
+                    單指拖曳旋轉 · 雙指縮放平移 · 點擊動物區或遊客即可管理
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('manage')}
+                    className="min-h-[38px] px-2.5 py-1 rounded-lg border border-[#E2DDD3] bg-[#FAF9F5] text-[#1A2B20] font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    總覽與圖鑑
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {!photoMode && (
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#5B6D60] px-1">
-              <span>
-                提示：每種動物均有專屬 3D 園區；點選園內遊客後才會說話並顯示名字、心情與聲音（空白鍵暫停）。
-              </span>
-              <span className="font-mono-num">
+            <div className="hidden lg:flex flex-wrap items-center justify-between gap-2 text-xs text-[#5B6D60] px-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-semibold shrink-0 transition-colors duration-500 ${weatherVisual.badgeClass}`}
+                >
+                  {weatherVisual.effectLabel}
+                </span>
+                <span className="truncate">
+                  提示：每種動物均有專屬 3D 園區；點選園內遊客後才會說話並顯示名字、心情與聲音（空白鍵暫停）。
+                </span>
+              </div>
+              <span className="font-mono-num shrink-0">
                 魅力值 {metrics.totalAppeal} · 動物福利 {metrics.avgWelfare}%
               </span>
             </div>
           )}
         </section>
 
-        {/* Right Panel: Contextual Species Zone Inspector / Park Overview */}
+        {/* Mobile Dedicated Build Picker Tab (< lg) */}
+        {!photoMode && mobileTab === 'build' && (
+          <div className="lg:hidden">
+            <BuildToolbar
+              activeTool={activeTool}
+              funds={funds}
+              landmarkUnlocked={landmarkUnlocked}
+              discoveredVisitorCount={
+                VISITOR_ARCHETYPE_IDS.filter((id) => (visitorTypeCounts[id] || 0) > 0).length
+              }
+              totalVisitorTypes={VISITOR_ARCHETYPE_IDS.length}
+              mobileExpanded={true}
+              onSelectTool={(tool) => {
+                setActiveTool(tool);
+                setMobileTab('park');
+              }}
+            />
+          </div>
+        )}
+
+        {/* Right Panel: Contextual Species Zone Inspector / Park Overview (always mounted on desktop, tab-shown on mobile) */}
         {!photoMode && (
-          <div className="lg:col-span-4 xl:col-span-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-5.5rem)]">
+          <div
+            className={`${
+              mobileTab === 'manage' ? 'block' : 'hidden lg:block'
+            } lg:col-span-4 xl:col-span-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-5.5rem)]`}
+          >
             <InspectorPanel
               grid={grid}
               selectedTile={selectedTile}
@@ -3192,7 +4033,10 @@ export default function App() {
               onAdoptAnimal={handleAdoptAnimal}
               onHireStaff={handleHireStaff}
               onChangeTicketPrice={setTicketPrice}
-              onSelectLandmarkTool={() => setActiveTool('landmark')}
+              onSelectLandmarkTool={() => {
+                setActiveTool('landmark');
+                setMobileTab('park');
+              }}
               onDeletePhoto={handleDeletePhoto}
               onSelectHabitatPos={(x, y) => {
                 handleSelectVisitor(null);
@@ -3206,7 +4050,174 @@ export default function App() {
             />
           </div>
         )}
+
+        {/* Mobile Dedicated Pomodoro Tab (< lg) */}
+        {!photoMode && mobileTab === 'pomodoro' && (
+          <div className="lg:hidden">
+            <PomodoroPanel
+              mode={pomodoroMode}
+              isRunning={pomodoroRunning}
+              secondsLeft={pomodoroSecondsLeft}
+              totalSeconds={pomodoroTotalSeconds}
+              focusMinutes={pomodoroFocusMins}
+              shortBreakMinutes={pomodoroShortMins}
+              longBreakMinutes={pomodoroLongMins}
+              completedPomodoros={completedPomodoros}
+              todayFocusMinutes={todayFocusMinutes}
+              taskLabel={pomodoroTaskLabel}
+              autoStudyMusic={pomodoroAutoStudyMusic}
+              bgmMuted={bgmMuted}
+              bgmTrack={bgmTrack}
+              variant="embedded"
+              onToggleRun={handleTogglePomodoroRun}
+              onReset={handleResetPomodoro}
+              onSkipPhase={handleSkipPomodoroPhase}
+              onSelectMode={handleSelectPomodoroMode}
+              onSelectPresetMinutes={handleSelectPomodoroPreset}
+              onChangeTaskLabel={setPomodoroTaskLabel}
+              onToggleAutoStudyMusic={() => setPomodoroAutoStudyMusic((v) => !v)}
+              onToggleBgm={handleToggleBgm}
+              onChangeBgmTrack={handleChangeBgmTrack}
+            />
+          </div>
+        )}
       </main>
+      </div>
+
+      {/* Non-blocking Pomodoro Phase Completion Toast */}
+      {pomodoroBanner && !photoMode && (
+        <div
+          className="fixed bottom-20 lg:bottom-5 right-3 left-3 sm:left-auto sm:w-96 z-40 bg-white border border-emerald-700/35 rounded-2xl p-3.5 shadow-xl flex flex-col gap-2.5"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+                <Timer className="w-4 h-4 text-emerald-700" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-[#1A2B20]">{pomodoroBanner.title}</p>
+                <p className="text-xs text-[#5B6D60] mt-0.5 leading-snug">
+                  {pomodoroBanner.subtitle}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPomodoroBanner(null)}
+              aria-label="關閉提醒"
+              className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg hover:bg-[#F4F2EC] text-[#5B6D60] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPomodoroBanner(null)}
+              className="min-h-[38px] px-3 py-1.5 rounded-lg border border-[#E2DDD3] bg-[#FAF9F5] text-xs font-semibold text-[#4A5D50] cursor-pointer"
+            >
+              稍後
+            </button>
+            <button
+              type="button"
+              onClick={handleStartNextFromBanner}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#059669] hover:bg-[#047857] text-white text-xs font-semibold cursor-pointer"
+            >
+              {pomodoroBanner.nextMode === 'focus' ? '開始專注讀書' : '開始休息計時'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Mobile Bottom Thumb Navigation Bar (< lg) */}
+      {!photoMode && (
+        <nav
+          aria-label="手機版主選單"
+          className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-[#E2DDD3] grid grid-cols-4 pb-safe shadow-[0_-4px_16px_rgba(26,43,32,0.06)]"
+        >
+          <button
+            type="button"
+            onClick={() => setMobileTab('park')}
+            className={`min-h-[58px] py-1.5 flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+              mobileTab === 'park' ? 'text-emerald-800 bg-emerald-50/60' : 'text-[#5B6D60]'
+            }`}
+          >
+            <Compass className="w-5 h-5" />
+            <span>園區</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('build')}
+            className={`min-h-[58px] py-1.5 flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+              mobileTab === 'build' ? 'text-emerald-800 bg-emerald-50/60' : 'text-[#5B6D60]'
+            }`}
+          >
+            <Hammer className="w-5 h-5" />
+            <span>建造</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('manage')}
+            className={`min-h-[58px] py-1.5 flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+              mobileTab === 'manage' ? 'text-emerald-800 bg-emerald-50/60' : 'text-[#5B6D60]'
+            }`}
+          >
+            <ClipboardList className="w-5 h-5" />
+            <span>管理</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('pomodoro')}
+            className={`min-h-[58px] py-1.5 flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+              mobileTab === 'pomodoro'
+                ? 'text-rose-800 bg-rose-50/60'
+                : pomodoroRunning
+                ? 'text-rose-700'
+                : 'text-[#5B6D60]'
+            }`}
+          >
+            <Timer className="w-5 h-5" />
+            <span className={pomodoroRunning ? 'font-mono-num' : ''}>
+              {pomodoroRunning ? formatPomodoroTime(pomodoroSecondsLeft) : '番茄鐘'}
+            </span>
+          </button>
+        </nav>
+      )}
+
+      {/* Desktop Pomodoro Modal */}
+      {pomodoroModalOpen && (
+        <PomodoroPanel
+          mode={pomodoroMode}
+          isRunning={pomodoroRunning}
+          secondsLeft={pomodoroSecondsLeft}
+          totalSeconds={pomodoroTotalSeconds}
+          focusMinutes={pomodoroFocusMins}
+          shortBreakMinutes={pomodoroShortMins}
+          longBreakMinutes={pomodoroLongMins}
+          completedPomodoros={completedPomodoros}
+          todayFocusMinutes={todayFocusMinutes}
+          taskLabel={pomodoroTaskLabel}
+          autoStudyMusic={pomodoroAutoStudyMusic}
+          bgmMuted={bgmMuted}
+          bgmTrack={bgmTrack}
+          variant="modal"
+          onClose={() => setPomodoroModalOpen(false)}
+          onToggleRun={handleTogglePomodoroRun}
+          onReset={handleResetPomodoro}
+          onSkipPhase={handleSkipPomodoroPhase}
+          onSelectMode={handleSelectPomodoroMode}
+          onSelectPresetMinutes={handleSelectPomodoroPreset}
+          onChangeTaskLabel={setPomodoroTaskLabel}
+          onToggleAutoStudyMusic={() => setPomodoroAutoStudyMusic((v) => !v)}
+          onToggleBgm={handleToggleBgm}
+          onChangeBgmTrack={handleChangeBgmTrack}
+        />
+      )}
 
       {(gameState === 'VICTORY' || gameState === 'GAME_OVER') && (
         <EndGameModal
@@ -3235,6 +4246,17 @@ export default function App() {
           onSaveSlot={handleSaveSlot}
           onLoadSlot={handleLoadSlot}
           onDeleteSlot={handleDeleteSlot}
+        />
+      )}
+
+      {offlineReward && (
+        <OfflineRewardModal
+          reward={offlineReward}
+          onClaim={() => {
+            soundFX.playCoin();
+            addPopup(GATE_POS.x, GATE_POS.y, `離線獎勵 +$${offlineReward.totalReward}`, 'gold');
+            setOfflineReward(null);
+          }}
         />
       )}
     </div>

@@ -23,6 +23,8 @@ interface BuildToolbarProps {
   landmarkUnlocked: boolean;
   discoveredVisitorCount: number;
   totalVisitorTypes: number;
+  mobileExpanded?: boolean;
+  onOpenBuildPicker?: () => void;
   onSelectTool: (tool: BuildTool) => void;
 }
 
@@ -32,6 +34,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
   landmarkUnlocked,
   discoveredVisitorCount,
   totalVisitorTypes,
+  mobileExpanded = false,
+  onOpenBuildPicker,
   onSelectTool,
 }) => {
   const [tab, setTab] = useState<'zones' | 'floors' | 'facilities'>('zones');
@@ -130,106 +134,368 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
     : null;
   const quickFloorSpec = FLOOR_TYPES[activeFloorType ?? lastFloor];
 
-  return (
-    <div className="bg-white border border-[#E2DDD3] rounded-xl p-2.5 flex flex-col gap-2 shadow-xs">
-      {/* Top Row: Quick Actions + Category Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1 p-0.5 bg-[#F4F2EC] rounded-lg border border-[#E2DDD3]">
-          <button
-            type="button"
-            onClick={() => setTab('zones')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-              tab === 'zones'
-                ? 'bg-white text-[#1A2B20] shadow-xs'
-                : 'text-[#5B6D60] hover:text-[#1A2B20]'
-            }`}
-          >
-            動物專屬區 ({SPECIES_LIST.length}種)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('floors')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-              tab === 'floors'
-                ? 'bg-white text-[#1A2B20] shadow-xs'
-                : 'text-[#5B6D60] hover:text-[#1A2B20]'
-            }`}
-          >
-            園區地板 (5種)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('facilities')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-              tab === 'facilities'
-                ? 'bg-white text-[#1A2B20] shadow-xs'
-                : 'text-[#5B6D60] hover:text-[#1A2B20]'
-            }`}
-          >
-            <span>園區設施 (8種)</span>
-            {landmarkUnlocked && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                地標已解鎖
-              </span>
-            )}
-          </button>
+  const getActiveToolSummary = (): string => {
+    if (activeTool === 'select') return '目前：選取查看';
+    if (activeTool === 'demolish') return '目前：拆除退費';
+    if (activeFloorType) return `鋪路：${FLOOR_TYPES[activeFloorType].name}`;
+    if (activeTool.startsWith('zone_')) {
+      const sid = activeTool.replace('zone_', '');
+      const found = SPECIES_LIST.find((s) => s.id === sid);
+      return found ? `建造：${found.zoneShortName}` : '建造動物區';
+    }
+    const fac = facilityTools.find((f) => f.id === activeTool);
+    return fac ? `建造：${fac.label}` : '選取查看';
+  };
+
+  // Compact 1-row quick bar on mobile Park tab so 3D viewport stays large and unobstructed
+  if (!mobileExpanded) {
+    return (
+      <div className="bg-white border border-[#E2DDD3] rounded-xl p-2 lg:p-2.5 flex flex-col gap-2 shadow-xs">
+        {/* Mobile slim quick row (< lg) */}
+        <div className="flex lg:hidden items-center justify-between gap-1.5 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onSelectTool('select')}
+              className={`min-h-[40px] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors whitespace-nowrap cursor-pointer ${
+                activeTool === 'select'
+                  ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                  : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3]'
+              }`}
+            >
+              <MousePointer2 className="w-3.5 h-3.5" />
+              <span>選取</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectTool(`floor_${activeFloorType ?? lastFloor}`)}
+              className={`min-h-[40px] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors whitespace-nowrap cursor-pointer ${
+                activeFloorType !== null
+                  ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                  : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3]'
+              }`}
+            >
+              <Footprints className="w-3.5 h-3.5" />
+              <span>鋪路</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectTool('demolish')}
+              className={`min-h-[40px] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors whitespace-nowrap cursor-pointer ${
+                activeTool === 'demolish'
+                  ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                  : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3]'
+              }`}
+            >
+              <Trash2 className={`w-3.5 h-3.5 ${activeTool === 'demolish' ? 'text-emerald-300' : 'text-rose-600'}`} />
+              <span>拆除</span>
+            </button>
+          </div>
+
+          {onOpenBuildPicker && (
+            <button
+              type="button"
+              onClick={onOpenBuildPicker}
+              className="min-h-[40px] px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            >
+              {activeTool === 'select' || activeTool === 'demolish' || activeFloorType
+                ? '更多建造項目'
+                : getActiveToolSummary()}
+            </button>
+          )}
         </div>
 
-        {/* Always-accessible core tools */}
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => onSelectTool('select')}
-            title="快捷鍵 1"
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
-              activeTool === 'select'
-                ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
-                : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
-            }`}
-          >
-            <MousePointer2 className={`w-4 h-4 ${activeTool === 'select' ? 'text-emerald-300' : ''}`} />
-            <span>選取查看</span>
-          </button>
+        {/* Desktop full toolbar (lg:) */}
+        <div className="hidden lg:flex lg:flex-col gap-2">
+          {/* Top Row: Quick Actions + Category Switcher */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1 p-0.5 bg-[#F4F2EC] rounded-lg border border-[#E2DDD3]">
+              <button
+                type="button"
+                onClick={() => setTab('zones')}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  tab === 'zones'
+                    ? 'bg-white text-[#1A2B20] shadow-xs'
+                    : 'text-[#5B6D60] hover:text-[#1A2B20]'
+                }`}
+              >
+                動物專屬區 ({SPECIES_LIST.length}種)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('floors')}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  tab === 'floors'
+                    ? 'bg-white text-[#1A2B20] shadow-xs'
+                    : 'text-[#5B6D60] hover:text-[#1A2B20]'
+                }`}
+              >
+                園區地板 (5種)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('facilities')}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                  tab === 'facilities'
+                    ? 'bg-white text-[#1A2B20] shadow-xs'
+                    : 'text-[#5B6D60] hover:text-[#1A2B20]'
+                }`}
+              >
+                <span>園區設施 (8種)</span>
+                {landmarkUnlocked && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                    地標已解鎖
+                  </span>
+                )}
+              </button>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              onSelectTool(`floor_${activeFloorType ?? lastFloor}`);
-              setTab('floors');
-            }}
-            title="快捷鍵 2 · Shift+拖曳連續鋪設"
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
-              activeFloorType !== null
-                ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
-                : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
-            }`}
-          >
-            <Footprints className={`w-4 h-4 ${activeFloorType !== null ? 'text-emerald-300' : ''}`} />
-            <span>{quickFloorSpec.name}</span>
-            <span className={`font-mono-num text-[11px] ${activeFloorType !== null ? 'text-stone-300' : 'text-[#5B6D60]'}`}>
-              ${quickFloorSpec.cost}
-            </span>
-          </button>
+            {/* Always-accessible core tools */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onSelectTool('select')}
+                title="快捷鍵 1"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTool === 'select'
+                    ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
+                }`}
+              >
+                <MousePointer2 className={`w-4 h-4 ${activeTool === 'select' ? 'text-emerald-300' : ''}`} />
+                <span>選取查看</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => onSelectTool('demolish')}
-            title="快捷鍵 0"
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
-              activeTool === 'demolish'
-                ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
-                : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
-            }`}
-          >
-            <Trash2 className={`w-4 h-4 ${activeTool === 'demolish' ? 'text-emerald-300' : 'text-rose-600'}`} />
-            <span>拆除退費</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectTool(`floor_${activeFloorType ?? lastFloor}`);
+                  setTab('floors');
+                }}
+                title="快捷鍵 2 · Shift+拖曳連續鋪設"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
+                  activeFloorType !== null
+                    ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
+                }`}
+              >
+                <Footprints className={`w-4 h-4 ${activeFloorType !== null ? 'text-emerald-300' : ''}`} />
+                <span>{quickFloorSpec.name}</span>
+                <span className={`font-mono-num text-[11px] ${activeFloorType !== null ? 'text-stone-300' : 'text-[#5B6D60]'}`}>
+                  ${quickFloorSpec.cost}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onSelectTool('demolish')}
+                title="快捷鍵 0"
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTool === 'demolish'
+                    ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] hover:border-[#C7BFB0]'
+                }`}
+              >
+                <Trash2 className={`w-4 h-4 ${activeTool === 'demolish' ? 'text-emerald-300' : 'text-rose-600'}`} />
+                <span>拆除退費</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Bottom Row: Selected Tab Items */}
+          {tab === 'zones' ? (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+              {SPECIES_LIST.map((spec) => {
+                const toolId: BuildTool = `zone_${spec.id}`;
+                const isActive = activeTool === toolId;
+                const cantAfford = funds < spec.buildCost;
+                return (
+                  <button
+                    key={spec.id}
+                    type="button"
+                    onClick={() => onSelectTool(toolId)}
+                    title={spec.description}
+                    className={`px-2 py-1.5 rounded-lg text-left transition-colors flex items-center gap-1.5 border cursor-pointer shrink-0 ${
+                      isActive
+                        ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                        : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2]'
+                    } ${cantAfford && !isActive ? 'opacity-60' : ''}`}
+                  >
+                    <AnimalSprite speciesId={spec.id} size={20} />
+                    <div className="flex flex-col leading-none">
+                      <span className="text-[11px] font-semibold whitespace-nowrap">
+                        {spec.zoneShortName}
+                      </span>
+                      <span
+                        className={`font-mono-num text-[10px] mt-0.5 whitespace-nowrap ${
+                          isActive
+                            ? 'text-stone-300'
+                            : cantAfford
+                            ? 'text-rose-600 font-semibold'
+                            : 'text-[#6A7B6F]'
+                        }`}
+                      >
+                        ${spec.buildCost}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : tab === 'floors' ? (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+              {FLOOR_TYPE_LIST.map((fl) => {
+                const toolId: BuildTool = `floor_${fl.id}`;
+                const isActive = activeTool === toolId;
+                const cantAfford = funds < fl.cost;
+                return (
+                  <button
+                    key={fl.id}
+                    type="button"
+                    onClick={() => handleSelectFloor(fl.id)}
+                    title={fl.description}
+                    className={`px-3 py-2 rounded-lg text-left transition-colors flex items-center gap-2.5 border cursor-pointer shrink-0 ${
+                      isActive
+                        ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
+                        : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2]'
+                    } ${cantAfford && !isActive ? 'opacity-60' : ''}`}
+                  >
+                    <span
+                      className="w-5 h-5 rounded-md border border-black/15 shrink-0 shadow-inner"
+                      style={{ backgroundColor: fl.swatchColor }}
+                    />
+                    <div className="flex flex-col leading-none">
+                      <span className="text-xs font-semibold whitespace-nowrap">{fl.name}</span>
+                      <span
+                        className={`font-mono-num text-[11px] mt-1 whitespace-nowrap ${
+                          isActive
+                            ? 'text-stone-300'
+                            : cantAfford
+                            ? 'text-rose-600 font-semibold'
+                            : 'text-[#6A7B6F]'
+                        }`}
+                      >
+                        ${fl.cost} · Shift+拖曳
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+              {facilityTools.map((tool) => {
+                const isLandmark = tool.id === 'landmark';
+                const isLocked = isLandmark && !landmarkUnlocked;
+                const isActive = activeTool === tool.id;
+                const cantAfford = tool.cost !== null && funds < tool.cost;
+                return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    disabled={isLocked}
+                    onClick={() => {
+                      if (!isLocked) onSelectTool(tool.id);
+                    }}
+                    title={
+                      isLocked
+                        ? `接待全部 ${totalVisitorTypes} 種遊客類型即可解鎖（目前 ${discoveredVisitorCount}/${totalVisitorTypes}）`
+                        : isLandmark
+                        ? `快捷鍵 ${tool.shortcut} · 增加園區魅力 +${FACILITY_COSTS.landmarkAppeal} 並提升鄰近展區吸引力`
+                        : `快捷鍵 ${tool.shortcut}`
+                    }
+                    className={`px-3 py-2 rounded-lg text-left transition-colors flex items-center gap-2 border shrink-0 ${
+                      isLocked
+                        ? 'bg-[#F4F2EC] text-[#8A988E] border-[#E2DDD3] opacity-75 cursor-not-allowed'
+                        : isActive
+                        ? 'bg-[#1A2B20] text-white border-[#1A2B20] cursor-pointer'
+                        : isLandmark
+                        ? 'bg-amber-50 text-[#1A2B20] border-amber-300 hover:border-amber-400 cursor-pointer'
+                        : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2] cursor-pointer'
+                    } ${!isLocked && cantAfford && !isActive ? 'opacity-60' : ''}`}
+                  >
+                    <span className={isActive ? 'text-emerald-300' : ''}>{tool.icon}</span>
+                    <div className="flex flex-col leading-none">
+                      <span className="text-xs font-semibold whitespace-nowrap">{tool.label}</span>
+                      <span
+                        className={`font-mono-num text-[11px] mt-1 whitespace-nowrap ${
+                          isLocked
+                            ? 'text-[#7A8A7E]'
+                            : isActive
+                            ? 'text-stone-300'
+                            : cantAfford
+                            ? 'text-rose-600 font-semibold'
+                            : isLandmark
+                            ? 'text-amber-700 font-semibold'
+                            : 'text-[#6A7B6F]'
+                        }`}
+                      >
+                        {isLocked
+                          ? `未解鎖 ${discoveredVisitorCount}/${totalVisitorTypes}`
+                          : isLandmark
+                          ? `$${tool.cost} · +${FACILITY_COSTS.landmarkAppeal}魅力`
+                          : tool.cost !== null
+                          ? `$${tool.cost}`
+                          : tool.id === 'demolish'
+                          ? '退半價'
+                          : '檢視'}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Dedicated full thumb-friendly Mobile Build Picker (shown inside Mobile "建造" tab)
+  return (
+    <div className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 flex flex-col gap-3 shadow-xs">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-[#1A2B20]">建造園區項目</h2>
+          <p className="text-xs text-[#5B6D60] mt-0.5">
+            點選任一項目後會自動返回園區，直接點擊草地即可放置
+          </p>
         </div>
       </div>
 
-      {/* Bottom Row: Selected Tab Items */}
+      {/* Category Switcher */}
+      <div className="grid grid-cols-3 gap-1 p-1 bg-[#F4F2EC] rounded-xl border border-[#E2DDD3]">
+        <button
+          type="button"
+          onClick={() => setTab('zones')}
+          className={`min-h-[42px] px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+            tab === 'zones' ? 'bg-white text-[#1A2B20] shadow-xs' : 'text-[#5B6D60]'
+          }`}
+        >
+          動物區 ({SPECIES_LIST.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('floors')}
+          className={`min-h-[42px] px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+            tab === 'floors' ? 'bg-white text-[#1A2B20] shadow-xs' : 'text-[#5B6D60]'
+          }`}
+        >
+          地板 (5種)
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('facilities')}
+          className={`min-h-[42px] px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+            tab === 'facilities' ? 'bg-white text-[#1A2B20] shadow-xs' : 'text-[#5B6D60]'
+          }`}
+        >
+          設施 ({facilityTools.length})
+        </button>
+      </div>
+
       {tab === 'zones' ? (
-        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+        <div className="grid grid-cols-2 gap-2">
           {SPECIES_LIST.map((spec) => {
             const toolId: BuildTool = `zone_${spec.id}`;
             const isActive = activeTool === toolId;
@@ -239,36 +505,29 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
                 key={spec.id}
                 type="button"
                 onClick={() => onSelectTool(toolId)}
-                title={spec.description}
-                className={`px-2 py-1.5 rounded-lg text-left transition-colors flex items-center gap-1.5 border cursor-pointer shrink-0 ${
+                className={`min-h-[54px] px-3 py-2 rounded-xl text-left transition-colors flex items-center gap-2.5 border cursor-pointer ${
                   isActive
                     ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
-                    : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2]'
-                } ${cantAfford && !isActive ? 'opacity-60' : ''}`}
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3]'
+                } ${cantAfford && !isActive ? 'opacity-65' : ''}`}
               >
-                <AnimalSprite speciesId={spec.id} size={20} />
-                <div className="flex flex-col leading-none">
-                  <span className="text-[11px] font-semibold whitespace-nowrap">
-                    {spec.zoneShortName}
-                  </span>
-                  <span
-                    className={`font-mono-num text-[10px] mt-0.5 whitespace-nowrap ${
-                      isActive
-                        ? 'text-stone-300'
-                        : cantAfford
-                        ? 'text-rose-600 font-semibold'
-                        : 'text-[#6A7B6F]'
+                <AnimalSprite speciesId={spec.id} size={26} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold truncate">{spec.zoneShortName}</div>
+                  <div
+                    className={`font-mono-num text-[11px] mt-0.5 ${
+                      isActive ? 'text-stone-300' : cantAfford ? 'text-rose-600 font-semibold' : 'text-[#5B6D60]'
                     }`}
                   >
                     ${spec.buildCost}
-                  </span>
+                  </div>
                 </div>
               </button>
             );
           })}
         </div>
       ) : tab === 'floors' ? (
-        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+        <div className="grid grid-cols-2 gap-2">
           {FLOOR_TYPE_LIST.map((fl) => {
             const toolId: BuildTool = `floor_${fl.id}`;
             const isActive = activeTool === toolId;
@@ -278,37 +537,32 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
                 key={fl.id}
                 type="button"
                 onClick={() => handleSelectFloor(fl.id)}
-                title={fl.description}
-                className={`px-3 py-2 rounded-lg text-left transition-colors flex items-center gap-2.5 border cursor-pointer shrink-0 ${
+                className={`min-h-[54px] px-3 py-2 rounded-xl text-left transition-colors flex items-center gap-2.5 border cursor-pointer ${
                   isActive
                     ? 'bg-[#1A2B20] text-white border-[#1A2B20]'
-                    : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2]'
-                } ${cantAfford && !isActive ? 'opacity-60' : ''}`}
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3]'
+                } ${cantAfford && !isActive ? 'opacity-65' : ''}`}
               >
                 <span
-                  className="w-5 h-5 rounded-md border border-black/15 shrink-0 shadow-inner"
+                  className="w-6 h-6 rounded-lg border border-black/15 shrink-0"
                   style={{ backgroundColor: fl.swatchColor }}
                 />
-                <div className="flex flex-col leading-none">
-                  <span className="text-xs font-semibold whitespace-nowrap">{fl.name}</span>
-                  <span
-                    className={`font-mono-num text-[11px] mt-1 whitespace-nowrap ${
-                      isActive
-                        ? 'text-stone-300'
-                        : cantAfford
-                        ? 'text-rose-600 font-semibold'
-                        : 'text-[#6A7B6F]'
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold truncate">{fl.name}</div>
+                  <div
+                    className={`font-mono-num text-[11px] mt-0.5 ${
+                      isActive ? 'text-stone-300' : cantAfford ? 'text-rose-600 font-semibold' : 'text-[#5B6D60]'
                     }`}
                   >
-                    ${fl.cost} · Shift+拖曳
-                  </span>
+                    ${fl.cost}
+                  </div>
                 </div>
               </button>
             );
           })}
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#EFECE3]">
+        <div className="grid grid-cols-2 gap-2">
           {facilityTools.map((tool) => {
             const isLandmark = tool.id === 'landmark';
             const isLocked = isLandmark && !landmarkUnlocked;
@@ -322,49 +576,38 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
                 onClick={() => {
                   if (!isLocked) onSelectTool(tool.id);
                 }}
-                title={
-                  isLocked
-                    ? `接待全部 ${totalVisitorTypes} 種遊客類型即可解鎖（目前 ${discoveredVisitorCount}/${totalVisitorTypes}）`
-                    : isLandmark
-                    ? `快捷鍵 ${tool.shortcut} · 增加園區魅力 +${FACILITY_COSTS.landmarkAppeal} 並提升鄰近展區吸引力`
-                    : `快捷鍵 ${tool.shortcut}`
-                }
-                className={`px-3 py-2 rounded-lg text-left transition-colors flex items-center gap-2 border shrink-0 ${
+                className={`min-h-[54px] px-3 py-2 rounded-xl text-left transition-colors flex items-center gap-2.5 border ${
                   isLocked
                     ? 'bg-[#F4F2EC] text-[#8A988E] border-[#E2DDD3] opacity-75 cursor-not-allowed'
                     : isActive
                     ? 'bg-[#1A2B20] text-white border-[#1A2B20] cursor-pointer'
                     : isLandmark
-                    ? 'bg-amber-50 text-[#1A2B20] border-amber-300 hover:border-amber-400 cursor-pointer'
-                    : 'bg-[#FAF9F5] text-[#1A2B20] border-transparent hover:border-[#D5CFC2] cursor-pointer'
-                } ${!isLocked && cantAfford && !isActive ? 'opacity-60' : ''}`}
+                    ? 'bg-amber-50 text-[#1A2B20] border-amber-300 cursor-pointer'
+                    : 'bg-[#FAF9F5] text-[#1A2B20] border-[#E2DDD3] cursor-pointer'
+                } ${!isLocked && cantAfford && !isActive ? 'opacity-65' : ''}`}
               >
                 <span className={isActive ? 'text-emerald-300' : ''}>{tool.icon}</span>
-                <div className="flex flex-col leading-none">
-                  <span className="text-xs font-semibold whitespace-nowrap">{tool.label}</span>
-                  <span
-                    className={`font-mono-num text-[11px] mt-1 whitespace-nowrap ${
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold truncate">{tool.label}</div>
+                  <div
+                    className={`font-mono-num text-[11px] mt-0.5 ${
                       isLocked
                         ? 'text-[#7A8A7E]'
                         : isActive
                         ? 'text-stone-300'
                         : cantAfford
                         ? 'text-rose-600 font-semibold'
-                        : isLandmark
-                        ? 'text-amber-700 font-semibold'
-                        : 'text-[#6A7B6F]'
+                        : 'text-[#5B6D60]'
                     }`}
                   >
                     {isLocked
                       ? `未解鎖 ${discoveredVisitorCount}/${totalVisitorTypes}`
-                      : isLandmark
-                      ? `$${tool.cost} · +${FACILITY_COSTS.landmarkAppeal}魅力`
                       : tool.cost !== null
                       ? `$${tool.cost}`
                       : tool.id === 'demolish'
                       ? '退半價'
                       : '檢視'}
-                  </span>
+                  </div>
                 </div>
               </button>
             );

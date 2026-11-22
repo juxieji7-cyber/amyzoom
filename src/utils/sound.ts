@@ -1703,6 +1703,23 @@ class SoundManager {
         break;
     }
   }
+
+  playPomodoroChime(kind: 'focus_done' | 'break_done') {
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    if (kind === 'focus_done') {
+      // Warm ascending major-9th desk bell chime signaling a completed focus session
+      this.playTone(523.25, 0.55, 'sine', 0.08, 0);
+      this.playTone(659.25, 0.55, 'sine', 0.075, 0.14);
+      this.playTone(783.99, 0.68, 'sine', 0.08, 0.28);
+      this.playTone(1046.5, 0.9, 'triangle', 0.045, 0.44);
+    } else {
+      // Gentle two-note chime signaling break ended and ready to resume focus
+      this.playTone(659.25, 0.45, 'sine', 0.07, 0);
+      this.playTone(880.0, 0.72, 'sine', 0.075, 0.18);
+    }
+  }
 }
 
 export const soundFX = new SoundManager();

@@ -7,6 +7,7 @@ import { ZooSaveSlotSummary, formatSaveTimestamp } from '../utils/saveSystem';
 interface TitleScreenProps {
   onStartGame: (mode: DifficultyMode) => void;
   latestSave: ZooSaveSlotSummary | null;
+  offlineDays?: number;
   hasAnySave: boolean;
   onContinueLatestSave: () => void;
   onOpenSaveModal: () => void;
@@ -41,6 +42,7 @@ const MODES: Array<{
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   onStartGame,
   latestSave,
+  offlineDays = 0,
   hasAnySave,
   onContinueLatestSave,
   onOpenSaveModal,
@@ -49,10 +51,10 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   const [imgError, setImgError] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#F4F2EC] text-[#1A2B20] flex flex-col items-center justify-center p-6 md:p-10">
+    <div className="min-h-screen bg-[#F4F2EC] text-[#1A2B20] flex flex-col items-center justify-center p-3 sm:p-6 md:p-10">
       <div className="w-full max-w-5xl bg-white border border-[#E2DDD3] rounded-2xl overflow-hidden shadow-sm grid grid-cols-1 lg:grid-cols-12 items-stretch">
         {/* Left: Illustrated Park Artwork */}
-        <div className="lg:col-span-7 relative bg-[#D9E7D5] min-h-[280px] lg:min-h-[540px]">
+        <div className="lg:col-span-7 relative bg-[#D9E7D5] min-h-[200px] sm:min-h-[280px] lg:min-h-[540px]">
           {!imgError ? (
             <img
               src={TITLE_BANNER_IMAGE}
@@ -81,7 +83,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </div>
 
         {/* Right: Mode Selection & Game Guide */}
-        <div className="lg:col-span-5 p-6 md:p-8 flex flex-col justify-between gap-6 bg-white">
+        <div className="lg:col-span-5 p-4 sm:p-6 md:p-8 flex flex-col justify-between gap-5 bg-white">
           <div className="space-y-5">
             <div>
               <h2 className="text-lg font-bold text-[#1A2B20] mb-3">核心玩法</h2>
@@ -113,11 +115,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 <div className="text-xs text-[#1A2B20] font-mono-num">
                   {latestSave.label} · 第 {latestSave.day} 天 · ${latestSave.funds.toLocaleString()} · {latestSave.rating.toFixed(1)}★
                 </div>
+                {offlineDays >= 1 && (
+                  <p className="text-xs font-semibold text-amber-800">
+                    已休園離線 {offlineDays} 天 · 繼續進度即可領取離線經營獎勵
+                  </p>
+                )}
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={onContinueLatestSave}
-                    className="flex-1 py-2 px-3 rounded-lg bg-[#059669] hover:bg-[#047857] text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="flex-1 min-h-[44px] py-2 px-3 rounded-lg bg-[#059669] hover:bg-[#047857] text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span>繼續上次進度</span>
@@ -126,7 +133,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     <button
                       type="button"
                       onClick={onOpenSaveModal}
-                      className="py-2 px-3 rounded-lg border border-[#D8D1C5] bg-white hover:bg-[#FAF9F5] text-[#1A2B20] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className="min-h-[44px] py-2 px-3 rounded-lg border border-[#D8D1C5] bg-white hover:bg-[#FAF9F5] text-[#1A2B20] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <FolderOpen className="w-3.5 h-3.5 text-emerald-700" />
                       <span>讀取存檔</span>
@@ -169,7 +176,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           <button
             type="button"
             onClick={() => onStartGame(selectedMode)}
-            className="w-full py-3.5 px-5 bg-[#059669] hover:bg-[#047857] active:scale-[0.99] text-white font-semibold text-base rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            className="w-full min-h-[48px] py-3.5 px-5 bg-[#059669] hover:bg-[#047857] active:scale-[0.99] text-white font-semibold text-base rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
           >
             <Play className="w-4 h-4 fill-current" />
             <span>開始經營新動物園</span>

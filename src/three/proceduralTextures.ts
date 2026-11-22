@@ -1210,5 +1210,108 @@ export function getMeerkatCoatTexture(): THREE.CanvasTexture {
   return finalizeTexture(key, canvas, { srgb: true });
 }
 
+export function getPuddleMaskTexture(): THREE.CanvasTexture {
+  const key = 'puddle_mask_128';
+  if (textureCache.has(key)) return textureCache.get(key)!;
+
+  const [canvas, ctx] = makeCanvas(128);
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, 128, 128);
+
+  // Organic multi-lobed puddle silhouette with soft wet-stone rim
+  const lobes = [
+    { x: 62, y: 64, rx: 38, ry: 27, rot: 0.18 },
+    { x: 42, y: 58, rx: 24, ry: 18, rot: -0.45 },
+    { x: 84, y: 70, rx: 22, ry: 16, rot: 0.55 },
+    { x: 66, y: 46, rx: 20, ry: 15, rot: 0.1 },
+    { x: 54, y: 80, rx: 22, ry: 14, rot: -0.25 },
+  ];
+
+  ctx.globalCompositeOperation = 'lighter';
+  for (const lobe of lobes) {
+    ctx.save();
+    ctx.translate(lobe.x, lobe.y);
+    ctx.rotate(lobe.rot);
+    ctx.scale(1, lobe.ry / lobe.rx);
+    const grad = ctx.createRadialGradient(0, 0, lobe.rx * 0.15, 0, 0, lobe.rx);
+    grad.addColorStop(0.0, 'rgba(255,255,255,0.92)');
+    grad.addColorStop(0.62, 'rgba(235,235,235,0.78)');
+    grad.addColorStop(0.84, 'rgba(130,130,130,0.35)');
+    grad.addColorStop(1.0, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  textureCache.set(key, tex);
+  return tex;
+}
+
+export function getRainRippleRingTexture(): THREE.CanvasTexture {
+  const key = 'rain_ripple_ring_128';
+  if (textureCache.has(key)) return textureCache.get(key)!;
+
+  const [canvas, ctx] = makeCanvas(128);
+  ctx.clearRect(0, 0, 128, 128);
+
+  const outer = ctx.createRadialGradient(64, 64, 34, 64, 64, 58);
+  outer.addColorStop(0.0, 'rgba(224,242,254,0)');
+  outer.addColorStop(0.45, 'rgba(224,242,254,0.85)');
+  outer.addColorStop(0.68, 'rgba(186,230,253,0.45)');
+  outer.addColorStop(1.0, 'rgba(224,242,254,0)');
+  ctx.fillStyle = outer;
+  ctx.beginPath();
+  ctx.arc(64, 64, 58, 0, Math.PI * 2);
+  ctx.fill();
+
+  const inner = ctx.createRadialGradient(64, 64, 16, 64, 64, 34);
+  inner.addColorStop(0.0, 'rgba(255,255,255,0)');
+  inner.addColorStop(0.55, 'rgba(224,242,254,0.6)');
+  inner.addColorStop(1.0, 'rgba(224,242,254,0)');
+  ctx.fillStyle = inner;
+  ctx.beginPath();
+  ctx.arc(64, 64, 34, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  textureCache.set(key, tex);
+  return tex;
+}
+
+export function getHeatMirageTexture(): THREE.CanvasTexture {
+  const key = 'heat_mirage_128';
+  if (textureCache.has(key)) return textureCache.get(key)!;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 128, 64);
+
+  const grad = ctx.createRadialGradient(64, 32, 4, 64, 32, 60);
+  grad.addColorStop(0.0, 'rgba(255, 244, 204, 0.72)');
+  grad.addColorStop(0.45, 'rgba(253, 211, 132, 0.32)');
+  grad.addColorStop(1.0, 'rgba(251, 191, 36, 0)');
+  ctx.save();
+  ctx.scale(1, 0.5);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(64, 64, 60, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  textureCache.set(key, tex);
+  return tex;
+}
+
+
 
 

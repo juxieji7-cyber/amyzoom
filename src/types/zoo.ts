@@ -262,6 +262,7 @@ export interface ParkStats {
   peakFunds: number;
   daysSurvived: number;
   dailyRevenue: number;
+  lastDayRevenue?: number;
   dailyExpenses: number;
 }
 

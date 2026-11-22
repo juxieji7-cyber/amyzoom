@@ -332,7 +332,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         role="tab"
         aria-selected={activeTab === 'inspector'}
         onClick={() => setActiveTab('inspector')}
-        className={`px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+        className={`min-h-[40px] lg:min-h-0 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
           activeTab === 'inspector'
             ? 'bg-white text-[#1A2B20] shadow-xs'
             : 'text-[#5B6D60] hover:text-[#1A2B20]'
@@ -345,7 +345,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         role="tab"
         aria-selected={activeTab === 'compendium'}
         onClick={() => setActiveTab('compendium')}
-        className={`px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap cursor-pointer ${
+        className={`min-h-[40px] lg:min-h-0 px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap cursor-pointer ${
           activeTab === 'compendium'
             ? 'bg-white text-emerald-900 shadow-xs'
             : 'text-[#5B6D60] hover:text-[#1A2B20]'
@@ -362,7 +362,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         role="tab"
         aria-selected={activeTab === 'photos'}
         onClick={() => setActiveTab('photos')}
-        className={`px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap cursor-pointer ${
+        className={`min-h-[40px] lg:min-h-0 px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap cursor-pointer ${
           activeTab === 'photos'
             ? 'bg-white text-rose-900 shadow-xs'
             : 'text-[#5B6D60] hover:text-[#1A2B20]'
@@ -392,7 +392,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     ];
 
     return (
-      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
+      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 sm:p-4 flex flex-col gap-4 lg:h-full lg:overflow-y-auto">
         {renderTabBar()}
 
         {/* Achievement Statistics Overview Card */}
@@ -631,7 +631,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       : null;
 
     return (
-      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-4 flex flex-col gap-3.5 h-full overflow-y-auto">
+      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 sm:p-4 flex flex-col gap-3.5 lg:h-full lg:overflow-y-auto">
         {renderTabBar()}
 
         {/* Header Summary */}
@@ -846,7 +846,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         : Frown;
 
     return (
-      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
+      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 sm:p-4 flex flex-col gap-4 lg:h-full lg:overflow-y-auto">
         {renderTabBar()}
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -994,7 +994,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         : 'bg-stone-400';
 
     return (
-      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-4 flex flex-col gap-4 h-full overflow-y-auto">
+      <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 sm:p-4 flex flex-col gap-4 lg:h-full lg:overflow-y-auto">
         {renderTabBar()}
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -1101,7 +1101,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             type="button"
             onClick={() => onFeedHabitat(selectedTile.x, selectedTile.y)}
             disabled={hab.animals.length === 0 || funds < FACILITY_COSTS.feed}
-            className="py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-emerald-50 hover:border-emerald-300 disabled:opacity-45 flex flex-col items-center gap-1 transition-colors cursor-pointer"
+            className="min-h-[58px] py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-emerald-50 hover:border-emerald-300 disabled:opacity-45 flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer"
           >
             <Utensils className="w-4 h-4 text-emerald-700" />
             <span className="text-xs font-semibold text-[#1A2B20] whitespace-nowrap">
@@ -1116,7 +1116,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             type="button"
             onClick={() => onCleanHabitat(selectedTile.x, selectedTile.y)}
             disabled={funds < FACILITY_COSTS.clean}
-            className="py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-sky-50 hover:border-sky-300 disabled:opacity-45 flex flex-col items-center gap-1 transition-colors cursor-pointer"
+            className="min-h-[58px] py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-sky-50 hover:border-sky-300 disabled:opacity-45 flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer"
           >
             <Sparkles className="w-4 h-4 text-sky-700" />
             <span className="text-xs font-semibold text-[#1A2B20] whitespace-nowrap">
@@ -1131,7 +1131,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             type="button"
             onClick={() => onEnrichHabitat(selectedTile.x, selectedTile.y)}
             disabled={hab.animals.length === 0 || funds < FACILITY_COSTS.enrich}
-            className="py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-amber-50 hover:border-amber-300 disabled:opacity-45 flex flex-col items-center gap-1 transition-colors cursor-pointer"
+            className="min-h-[58px] py-2 px-2 rounded-xl border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-amber-50 hover:border-amber-300 disabled:opacity-45 flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer"
           >
             <SmilePlus className="w-4 h-4 text-amber-600" />
             <span className="text-xs font-semibold text-[#1A2B20] whitespace-nowrap">
@@ -1149,7 +1149,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             type="button"
             onClick={() => onUpgradeHabitat(selectedTile.x, selectedTile.y)}
             disabled={funds < upgradeCost}
-            className="w-full py-2.5 px-3 rounded-xl border border-emerald-700/30 bg-emerald-50/70 hover:bg-emerald-100/70 disabled:opacity-45 flex items-center justify-between text-xs font-semibold text-emerald-900 transition-colors cursor-pointer"
+            className="w-full min-h-[44px] py-2.5 px-3 rounded-xl border border-emerald-700/30 bg-emerald-50/70 hover:bg-emerald-100/70 disabled:opacity-45 flex items-center justify-between text-xs font-semibold text-emerald-900 transition-colors cursor-pointer"
           >
             <span className="flex items-center gap-1.5">
               <ArrowUpCircle className="w-4 h-4 text-emerald-700" />
@@ -1409,7 +1409,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               type="button"
               disabled={isFull || cantAffordAdopt}
               onClick={() => onAdoptAnimal(selectedTile.x, selectedTile.y, spec.id)}
-              className="px-2.5 py-1.5 rounded-lg bg-[#059669] hover:bg-[#047857] disabled:bg-[#E2DDD3] disabled:text-[#7A8A7E] text-white text-xs font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+              className="min-h-[42px] px-3 py-1.5 rounded-lg bg-[#059669] hover:bg-[#047857] disabled:bg-[#E2DDD3] disabled:text-[#7A8A7E] text-white text-xs font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span className="font-mono-num">${spec.cost}</span>
@@ -1448,7 +1448,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   );
 
   return (
-    <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-4 flex flex-col gap-5 h-full overflow-y-auto">
+    <aside className="bg-white border border-[#E2DDD3] rounded-2xl p-3.5 sm:p-4 flex flex-col gap-5 lg:h-full lg:overflow-y-auto">
       {renderTabBar()}
       {/* Dynamic Weather & Forecast Card */}
       <div>
