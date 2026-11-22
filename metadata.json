@@ -1,0 +1,6 @@
+{
+  "name": "森之方舟動物園",
+  "description": "打造並經營屬於你的自然生態動物園，規劃步道、建造多樣棲地、照料動物夥伴並迎接快樂遊客。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

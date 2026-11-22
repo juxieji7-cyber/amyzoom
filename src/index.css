@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', 'Noto Sans TC', system-ui, sans-serif;
+    --font-sans: 'Noto Sans TC', 'Outfit', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F4F2EC;
+    color: #1A2B20;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes floatUpFade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.92);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -6px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -28px) scale(0.96);
+  }
+}
+
+.animate-float-popup {
+  animation: floatUpFade 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes weatherRainFall {
+  0% {
+    transform: translate3d(0, -24px, 0);
+  }
+  100% {
+    transform: translate3d(-14px, 24px, 0);
+  }
+}
+
+@keyframes rainDropletSlide {
+  0% {
+    transform: translate3d(0, -10px, 0) scaleY(0.92);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.78;
+  }
+  80% {
+    opacity: 0.72;
+  }
+  100% {
+    transform: translate3d(-4px, 46px, 0) scaleY(1.12);
+    opacity: 0;
+  }
+}
+
+@keyframes heatShimmerRise {
+  0% {
+    transform: translate3d(0, 10px, 0) scaleX(1) scaleY(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate3d(6px, -8px, 0) scaleX(1.03) scaleY(1.04);
+    opacity: 0.62;
+  }
+  100% {
+    transform: translate3d(-4px, -22px, 0) scaleX(0.99) scaleY(1.02);
+    opacity: 0.3;
+  }
+}
+
+@keyframes heatMirageWave {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) skewX(0deg);
+  }
+  33% {
+    transform: translate3d(3px, -2px, 0) skewX(0.7deg);
+  }
+  66% {
+    transform: translate3d(-3px, 1px, 0) skewX(-0.7deg);
+  }
+}
+
+@keyframes breezyAirDrift {
+  0% {
+    transform: translate3d(-10%, 6px, 0);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.42;
+  }
+  75% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate3d(14%, -10px, 0);
+    opacity: 0;
+  }
+}
+
+@keyframes sunGlowBreathe {
+  0%, 100% {
+    opacity: 0.42;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.04);
+  }
+}
+
+.animate-weather-rain {
+  animation: weatherRainFall 0.65s linear infinite;
+}
+
+.animate-rain-droplets {
+  animation: rainDropletSlide 3.6s ease-in infinite;
+}
+
+.animate-rain-droplets-slow {
+  animation: rainDropletSlide 5.2s ease-in infinite;
+}
+
+.animate-heat-shimmer {
+  animation: heatShimmerRise 3.2s ease-in-out infinite alternate;
+}
+
+.animate-heat-mirage {
+  animation: heatMirageWave 2.6s ease-in-out infinite;
+}
+
+.animate-breezy-drift {
+  animation: breezyAirDrift 5.4s ease-in-out infinite;
+}
+
+.animate-sun-breathe {
+  animation: sunGlowBreathe 6s ease-in-out infinite;
+}
+
+.weather-paused,
+.weather-paused * {
+  animation-play-state: paused !important;
+}
+
+.weather-heat-filter {
+  filter: url(#zoo-heat-distortion);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-popup,
+  .animate-weather-rain,
+  .animate-rain-droplets,
+  .animate-rain-droplets-slow,
+  .animate-heat-shimmer,
+  .animate-heat-mirage,
+  .animate-breezy-drift,
+  .animate-sun-breathe {
+    animation: none;
+  }
+  .weather-heat-filter {
+    filter: none;
+  }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
