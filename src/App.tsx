@@ -75,6 +75,7 @@ import {
   nextId,
   pickNextWeather,
   pickRandomSeasonalEvent,
+  pickVisitorDestinationPlan,
   recomputeConnectivity,
 } from './utils/parkLogic';
 import { AmbientAudioMode, BGM_TRACKS, BgmTrackId, soundFX } from './utils/sound';
@@ -1018,6 +1019,7 @@ export default function App() {
     Partial<Record<SpeciesId, CultivatedSpeciesRecord>>
   >(() => collectInitialCultivatedSpecies(grid));
   const [landmarkUnlocked, setLandmarkUnlocked] = useState<boolean>(false);
+  const [goldenGuideUnlocked, setGoldenGuideUnlocked] = useState<boolean>(false);
   const [keepers, setKeepers] = useState<KeeperInstance[]>([]);
   const [popups, setPopups] = useState<FloatingPopup[]>([]);
   const [completedMilestones, setCompletedMilestones] = useState<string[]>([]);
@@ -1123,6 +1125,7 @@ export default function App() {
     setVisitorTypeCounts(createEmptyVisitorTypeCounts());
     setCultivatedSpecies(collectInitialCultivatedSpecies(initialGrid));
     setLandmarkUnlocked(false);
+    setGoldenGuideUnlocked(false);
     setKeepers([]);
     setPopups([]);
     setCompletedMilestones([]);
@@ -1159,8 +1162,8 @@ export default function App() {
   }, [visitors]);
 
   const metrics = useMemo(
-    () => computeParkMetrics(grid, ticketPrice, weather, avgVisitorMood),
-    [grid, ticketPrice, weather, avgVisitorMood]
+    () => computeParkMetrics(grid, ticketPrice, weather, avgVisitorMood, goldenGuideUnlocked),
+    [grid, ticketPrice, weather, avgVisitorMood, goldenGuideUnlocked]
   );
 
   // Keyboard shortcuts
@@ -1220,6 +1223,7 @@ export default function App() {
     visitorTypeCounts,
     cultivatedSpecies,
     landmarkUnlocked,
+    goldenGuideUnlocked,
     keepers,
     completedMilestones,
     victoryDismissed,
@@ -1247,6 +1251,7 @@ export default function App() {
     visitorTypeCounts,
     cultivatedSpecies,
     landmarkUnlocked,
+    goldenGuideUnlocked,
     keepers,
     completedMilestones,
     victoryDismissed,
@@ -1831,6 +1836,7 @@ export default function App() {
               ? Math.max(0, (v.stargazePauseTicks ?? 0) - 1)
               : 0;
           let stargazeCooldownTicks = Math.max(0, (v.stargazeCooldownTicks ?? 0) - 1);
+          const guidedCooldownTicks = Math.max(0, (v.guidedCooldownTicks ?? 0) - 1);
 
           const isSelectedVisitor = v.id === s.selectedVisitorId;
           let thought = isPosingPhoto ? '一起合影留念！' : '';
@@ -1842,6 +1848,7 @@ export default function App() {
               v.mood +
                 weatherSpec.visitorMoodDelta +
                 (activeSeasonalSpec ? activeSeasonalSpec.visitorMoodDelta : 0) +
+                (s.goldenGuideUnlocked ? 0.35 : 0) +
                 (startedPhotoNow ? 10 : 0)
             )
           );
@@ -2121,6 +2128,45 @@ export default function App() {
             }
           }
 
+          let plannedDestination = v.plannedDestination ?? null;
+          let destinationSeekTicks = v.destinationSeekTicks ?? 0;
+          const destTile = plannedDestination
+            ? nextGrid[plannedDestination.y]?.[plannedDestination.x]
+            : null;
+          const destValid = Boolean(
+            plannedDestination &&
+              destTile &&
+              destTile.connected &&
+              destTile.type === plannedDestination.tileType
+          );
+          const arrivedAtDest = Boolean(
+            plannedDestination &&
+              vx === plannedDestination.walkTileX &&
+              vy === plannedDestination.walkTileY
+          );
+
+          if (!plannedDestination || !destValid || arrivedAtDest || destinationSeekTicks <= 0) {
+            const excludePos = arrivedAtDest && plannedDestination
+              ? { x: plannedDestination.x, y: plannedDestination.y }
+              : undefined;
+            plannedDestination = pickVisitorDestinationPlan(
+              {
+                ...v,
+                energy,
+                hunger,
+                hasBoughtSnack,
+                hasBoughtSouvenir,
+              },
+              nextGrid,
+              s.weather,
+              nextIsNight,
+              excludePos
+            );
+            destinationSeekTicks = plannedDestination ? 22 : 0;
+          } else if (!isPosingPhoto && !isStargazingNow && !stargazeTarget) {
+            destinationSeekTicks = Math.max(0, destinationSeekTicks - 1);
+          }
+
           const neighbors = getWalkableNeighbors(nextGrid, vx, vy).filter(
             ([nx, ny]) => nextGrid[ny][nx].connected
           );
@@ -2143,6 +2189,15 @@ export default function App() {
                 stargazeTarget = null;
                 stargazeSeekTicks = 0;
               }
+            }
+            if (!picked && plannedDestination && Math.random() < 0.82) {
+              picked = getNextStepToward(
+                nextGrid,
+                vx,
+                vy,
+                plannedDestination.walkTileX,
+                plannedDestination.walkTileY
+              );
             }
             if (!picked) {
               const forwardOptions = neighbors.filter(([nx, ny]) => !(nx === targetX && ny === targetY));
@@ -2175,6 +2230,9 @@ export default function App() {
             stargazeSeekTicks,
             stargazePauseTicks,
             stargazeCooldownTicks,
+            plannedDestination,
+            destinationSeekTicks,
+            guidedCooldownTicks,
           };
         })
         .filter((v) => v.stayTicks > 0);
@@ -2182,6 +2240,7 @@ export default function App() {
       // Spawn new visitor with random archetype & achievement tracking (quiet until clicked)
       let nextVisitorTypeCounts = s.visitorTypeCounts;
       let nextLandmarkUnlocked = s.landmarkUnlocked;
+      let nextGoldenGuideUnlocked = s.goldenGuideUnlocked;
       const nightSpawnMult = nextIsNight ? 0.55 : 1.0;
       const seasonalSpawnMult = activeSeasonalSpec ? activeSeasonalSpec.spawnMultiplier : 1.0;
       if (
@@ -2202,10 +2261,14 @@ export default function App() {
           existingNames,
           activeSeasonalSpec?.boostedArchetypes
         );
+        const initialPlan = pickVisitorDestinationPlan(spawned, nextGrid, s.weather, nextIsNight);
         const newVis: VisitorInstance = {
           ...spawned,
           thought: '',
           thoughtTicks: 0,
+          plannedDestination: initialPlan,
+          destinationSeekTicks: initialPlan ? 22 : 0,
+          guidedCooldownTicks: 0,
         };
         nextVisitors.push(newVis);
 
@@ -2229,7 +2292,7 @@ export default function App() {
             addPopup(GATE_POS.x, GATE_POS.y, '解鎖金色導覽地標！', 'gold');
             addLog(
               s.day,
-              `遊客成就達成！已集滿全部 ${VISITOR_ARCHETYPE_IDS.length} 種遊客類型，解鎖特殊裝飾「金色導覽地標」（可至園區設施建造以提升園區魅力）！`,
+              `已集滿全部 ${VISITOR_ARCHETYPE_IDS.length} 種遊客類型，解鎖特殊裝飾「金色導覽地標」（可至園區設施建造以提升園區魅力）！`,
               'success'
             );
           }
@@ -2246,12 +2309,26 @@ export default function App() {
         else if (m.type === 'visitors') current = s.stats.totalVisitors + addedVisitors;
         else if (m.type === 'animals') current = s.metrics.totalAnimals;
         else if (m.type === 'rating') current = s.metrics.rating;
+        else if (m.type === 'visitor_types') {
+          current = VISITOR_ARCHETYPE_IDS.filter(
+            (id) => (nextVisitorTypeCounts[id] || 0) > 0
+          ).length;
+        }
 
         if (current >= m.targetValue) {
           newlyDone.push(m.id);
           nextFunds += m.reward;
           soundFX.playMilestone();
           addLog(s.day, `達成目標「${m.title}」，獲得獎勵 $${m.reward}！`, 'success');
+          if (m.id === 'm_visitor_master') {
+            nextGoldenGuideUnlocked = true;
+            addPopup(GATE_POS.x, GATE_POS.y, '🏅 解鎖金牌嚮導證！', 'gold');
+            addLog(
+              s.day,
+              '達成「遊客圖鑑大師」成就！解鎖專屬「金牌嚮導證」，在園區中點擊遊客即可查看未來想前往的設施，並立即提供導覽提升遊客滿意度！',
+              'success'
+            );
+          }
           if (m.id === 'm_rating_48' && !s.victoryDismissed) {
             setGameState('VICTORY');
           }
@@ -2469,6 +2546,9 @@ export default function App() {
       if (nextLandmarkUnlocked !== s.landmarkUnlocked) {
         setLandmarkUnlocked(nextLandmarkUnlocked);
       }
+      if (nextGoldenGuideUnlocked !== s.goldenGuideUnlocked) {
+        setGoldenGuideUnlocked(nextGoldenGuideUnlocked);
+      }
       setKeepers(nextKeepers);
       setDay(nextDay);
       setTickInDay(nextTick);
@@ -2500,7 +2580,13 @@ export default function App() {
           nextVisitors.length === 0
             ? 84
             : nextVisitors.reduce((acc, v) => acc + v.mood, 0) / nextVisitors.length;
-        const snapMetrics = computeParkMetrics(nextGrid, s.ticketPrice, nextCurrWeather, avgMoodNow);
+        const snapMetrics = computeParkMetrics(
+          nextGrid,
+          s.ticketPrice,
+          nextCurrWeather,
+          avgMoodNow,
+          nextGoldenGuideUnlocked
+        );
         const autoSaved = saveZooToSlot('autosave', {
           label: `每日自動存檔 · 第 ${nextDay} 天`,
           difficulty: s.difficulty,
@@ -2520,6 +2606,7 @@ export default function App() {
           visitorTypeCounts: nextVisitorTypeCounts,
           cultivatedSpecies: nextCultivated,
           landmarkUnlocked: nextLandmarkUnlocked,
+          goldenGuideUnlocked: nextGoldenGuideUnlocked,
           keepers: nextKeepers,
           completedMilestones:
             newlyDone.length > 0 ? [...s.completedMilestones, ...newlyDone] : s.completedMilestones,
@@ -3064,39 +3151,68 @@ export default function App() {
     });
   }, [muted]);
 
-  const handleSelectVisitor = useCallback((visitorId: string | null) => {
-    setSelectedVisitorId(visitorId);
-    setVisitors((prev) =>
-      prev.map((vis) => {
-        if (vis.id !== visitorId) {
-          return vis.thought ? { ...vis, thought: '', thoughtTicks: 0 } : vis;
-        }
-        const s = simRef.current;
-        const currIsNight = s.tickInDay >= 18;
-        const spokenLine =
-          vis.thought ||
-          ((vis.stargazePauseTicks ?? 0) > 0
-            ? pickRandomLine([
-                '抬頭仰望星空，星光閃爍好療癒 ✨',
-                '站在空曠草地步道吹晚風看星星真舒服 ✨',
-                '今晚星空好美，心情都變得好幸福 ✨',
-              ])
-            : pickVisitorMoodWeatherDialogue(
-                vis.mood,
-                s.weather,
-                vis.energy,
-                vis.hunger,
-                vis.hasBoughtSnack,
-                currIsNight
-              ));
-        return {
-          ...vis,
-          thought: spokenLine,
-          thoughtTicks: 6,
-        };
-      })
-    );
-  }, []);
+  const handleSelectVisitor = useCallback(
+    (visitorId: string | null) => {
+      setSelectedVisitorId(visitorId);
+      setVisitors((prev) =>
+        prev.map((vis) => {
+          if (vis.id !== visitorId) {
+            return vis.thought ? { ...vis, thought: '', thoughtTicks: 0 } : vis;
+          }
+          const s = simRef.current;
+          const currIsNight = s.tickInDay >= 18;
+          const destPlan =
+            vis.plannedDestination ??
+            pickVisitorDestinationPlan(vis, s.grid, s.weather, currIsNight);
+
+          let nextMood = vis.mood;
+          let nextEnergy = vis.energy;
+          let nextGuideCooldown = vis.guidedCooldownTicks ?? 0;
+          let guideBonusApplied = false;
+
+          if (s.goldenGuideUnlocked && nextGuideCooldown <= 0) {
+            nextMood = Math.min(100, vis.mood + 10);
+            nextEnergy = Math.min(100, vis.energy + 6);
+            nextGuideCooldown = 14;
+            guideBonusApplied = true;
+            addPopup(Math.round(vis.x), Math.round(vis.y), '🏅 金牌導覽 +10% 滿意度', 'gold');
+            soundFX.playCare();
+          }
+
+          const spokenLine =
+            vis.thought ||
+            (guideBonusApplied && destPlan
+              ? `謝謝金牌嚮導！正準備逛去「${destPlan.label}」✨`
+              : (vis.stargazePauseTicks ?? 0) > 0
+              ? pickRandomLine([
+                  '抬頭仰望星空，星光閃爍好療癒 ✨',
+                  '站在空曠草地步道吹晚風看星星真舒服 ✨',
+                  '今晚星空好美，心情都變得好幸福 ✨',
+                ])
+              : pickVisitorMoodWeatherDialogue(
+                  nextMood,
+                  s.weather,
+                  nextEnergy,
+                  vis.hunger,
+                  vis.hasBoughtSnack,
+                  currIsNight
+                ));
+
+          return {
+            ...vis,
+            mood: nextMood,
+            energy: nextEnergy,
+            plannedDestination: destPlan,
+            destinationSeekTicks: vis.destinationSeekTicks ?? (destPlan ? 22 : 0),
+            guidedCooldownTicks: nextGuideCooldown,
+            thought: spokenLine,
+            thoughtTicks: 6,
+          };
+        })
+      );
+    },
+    [addPopup]
+  );
 
   const handlePhotoCaptured = useCallback((photoId: string, dataUrl: string) => {
     setPhotoAlbum((prev) =>
@@ -3135,6 +3251,7 @@ export default function App() {
         visitorTypeCounts: s.visitorTypeCounts,
         cultivatedSpecies: s.cultivatedSpecies,
         landmarkUnlocked: s.landmarkUnlocked,
+        goldenGuideUnlocked: s.goldenGuideUnlocked,
         keepers: s.keepers,
         completedMilestones: s.completedMilestones,
         victoryDismissed: s.victoryDismissed,
@@ -3183,6 +3300,7 @@ export default function App() {
         visitorTypeCounts: s.visitorTypeCounts,
         cultivatedSpecies: s.cultivatedSpecies,
         landmarkUnlocked: s.landmarkUnlocked,
+        goldenGuideUnlocked: s.goldenGuideUnlocked,
         keepers: s.keepers,
         completedMilestones: s.completedMilestones,
         victoryDismissed: s.victoryDismissed,
@@ -3263,14 +3381,28 @@ export default function App() {
       lastSeasonalRef.current = loaded.lastSeasonalEvent;
       idleSeasonalDaysRef.current = loaded.idleSeasonalDays ?? 0;
       weatherPopupKeyRef.current = {};
+      const loadedVisitorCounts = loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts();
+      const allVisitorTypesCollected =
+        VISITOR_ARCHETYPE_IDS.filter((id) => (loadedVisitorCounts[id] || 0) > 0).length >=
+        VISITOR_ARCHETYPE_IDS.length;
+      const restoredGoldenGuide =
+        Boolean(loaded.goldenGuideUnlocked) ||
+        loaded.completedMilestones.includes('m_visitor_master') ||
+        allVisitorTypesCollected;
+      const restoredMilestones =
+        allVisitorTypesCollected && !loaded.completedMilestones.includes('m_visitor_master')
+          ? [...loaded.completedMilestones, 'm_visitor_master']
+          : loaded.completedMilestones;
+
       setVisitors(loaded.visitors);
-      setVisitorTypeCounts(loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts());
+      setVisitorTypeCounts(loadedVisitorCounts);
       setCultivatedSpecies(
         loaded.cultivatedSpecies ?? collectInitialCultivatedSpecies(loaded.grid)
       );
-      setLandmarkUnlocked(Boolean(loaded.landmarkUnlocked));
+      setLandmarkUnlocked(Boolean(loaded.landmarkUnlocked) || allVisitorTypesCollected);
+      setGoldenGuideUnlocked(restoredGoldenGuide);
       setKeepers(loaded.keepers);
-      setCompletedMilestones(loaded.completedMilestones);
+      setCompletedMilestones(restoredMilestones);
       setVictoryDismissed(Boolean(loaded.victoryDismissed));
       setNegativeFundDays(loaded.negativeFundDays ?? 0);
       setStats(nextStats);
@@ -3301,7 +3433,8 @@ export default function App() {
           loaded.grid,
           loaded.ticketPrice,
           loaded.weather,
-          avgMoodSnap
+          avgMoodSnap,
+          restoredGoldenGuide
         );
         saveZooToSlot('autosave', {
           label: `每日自動存檔 · 第 ${loaded.day} 天`,
@@ -3319,12 +3452,13 @@ export default function App() {
           lastSeasonalEvent: loaded.lastSeasonalEvent,
           idleSeasonalDays: loaded.idleSeasonalDays ?? 0,
           visitors: loaded.visitors,
-          visitorTypeCounts: loaded.visitorTypeCounts ?? createEmptyVisitorTypeCounts(),
+          visitorTypeCounts: loadedVisitorCounts,
           cultivatedSpecies:
             loaded.cultivatedSpecies ?? collectInitialCultivatedSpecies(loaded.grid),
-          landmarkUnlocked: Boolean(loaded.landmarkUnlocked),
+          landmarkUnlocked: Boolean(loaded.landmarkUnlocked) || allVisitorTypesCollected,
+          goldenGuideUnlocked: restoredGoldenGuide,
           keepers: loaded.keepers,
-          completedMilestones: loaded.completedMilestones,
+          completedMilestones: restoredMilestones,
           victoryDismissed: Boolean(loaded.victoryDismissed),
           negativeFundDays: loaded.negativeFundDays ?? 0,
           stats: nextStats,
@@ -3858,6 +3992,7 @@ export default function App() {
               activeTool={activeTool}
               selectedPos={selectedPos}
               selectedVisitorId={selectedVisitorId}
+              goldenGuideUnlocked={goldenGuideUnlocked}
               visitors={visitors}
               keepers={keepers}
               popups={popups}
@@ -3881,7 +4016,9 @@ export default function App() {
                       {selectedVisitorObj.name} · {selectedVisitorObj.archetypeLabel}
                     </p>
                     <p className="text-[11px] text-[#5B6D60] truncate">
-                      {selectedVisitorObj.thought || `心情 ${Math.round(selectedVisitorObj.mood)}%`}
+                      {goldenGuideUnlocked && selectedVisitorObj.plannedDestination
+                        ? `🏅 想去：${selectedVisitorObj.plannedDestination.label}`
+                        : selectedVisitorObj.thought || `心情 ${Math.round(selectedVisitorObj.mood)}%`}
                     </p>
                   </div>
                   <button
@@ -4019,6 +4156,7 @@ export default function App() {
               cultivatedSpecies={cultivatedSpecies}
               photoAlbum={photoAlbum}
               landmarkUnlocked={landmarkUnlocked}
+              goldenGuideUnlocked={goldenGuideUnlocked}
               keepers={keepers}
               completedMilestones={completedMilestones}
               logs={logs}

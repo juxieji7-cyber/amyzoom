@@ -631,6 +631,14 @@ export const MILESTONES: MilestoneSpec[] = [
     type: 'animals',
   },
   {
+    id: 'm_visitor_master',
+    title: '遊客圖鑑大師',
+    description: `集滿全部 ${VISITOR_ARCHETYPE_IDS.length} 種遊客類型，解鎖專屬「金牌嚮導證」`,
+    reward: 600,
+    targetValue: VISITOR_ARCHETYPE_IDS.length,
+    type: 'visitor_types',
+  },
+  {
     id: 'm_rating_48',
     title: '五星級傳奇動物園',
     description: '園區評價達到 4.8 星以上（通關目標）',

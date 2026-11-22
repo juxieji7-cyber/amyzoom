@@ -192,6 +192,17 @@ export type VisitorArchetype =
   | 'foodie'
   | 'vip';
 
+export interface VisitorDestinationPlan {
+  label: string;
+  tileType: TileType;
+  x: number;
+  y: number;
+  walkTileX: number;
+  walkTileY: number;
+  reason: string;
+  speciesId?: SpeciesId;
+}
+
 export interface VisitorInstance {
   id: string;
   name: string;
@@ -217,6 +228,9 @@ export interface VisitorInstance {
   stargazeSeekTicks?: number;
   stargazePauseTicks?: number;
   stargazeCooldownTicks?: number;
+  plannedDestination?: VisitorDestinationPlan | null;
+  destinationSeekTicks?: number;
+  guidedCooldownTicks?: number;
 }
 
 export type StaffRole = 'keeper' | 'cleaner';
@@ -247,7 +261,7 @@ export interface MilestoneSpec {
   description: string;
   reward: number;
   targetValue: number;
-  type: 'animals' | 'species' | 'visitors' | 'rating' | 'habitats';
+  type: 'animals' | 'species' | 'visitors' | 'rating' | 'habitats' | 'visitor_types';
 }
 
 export interface ParkLogEntry {

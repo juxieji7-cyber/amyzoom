@@ -21,6 +21,7 @@ import {
   SeasonalEventId,
   SpeciesId,
   VisitorArchetype,
+  VisitorDestinationPlan,
   VisitorInstance,
   WeatherType,
 } from '../types/zoo';
@@ -198,6 +199,181 @@ export function getVisitorMoodInfo(mood: number): {
   if (mood >= 68) return { label: '心情愉悅', tone: 'sky' };
   if (mood >= 48) return { label: '情緒普通', tone: 'amber' };
   return { label: '有點煩躁', tone: 'rose' };
+}
+
+export function getTileFacilityLabel(tile: ParkTile): string {
+  if (tile.type === 'habitat' && tile.habitat) {
+    return ANIMAL_SPECIES[tile.habitat.speciesId].zoneName;
+  }
+  switch (tile.type) {
+    case 'snack':
+      return '園區輕食攤位';
+    case 'bench':
+      return '樹蔭休憩長椅';
+    case 'garden':
+      return '景觀花圃';
+    case 'souvenir':
+      return '動物紀念品店';
+    case 'fountain':
+      return '噴泉廣場';
+    case 'restroom':
+      return '園區洗手間';
+    case 'pavilion':
+      return '觀景涼亭';
+    case 'landmark':
+      return '金色導覽地標';
+    case 'gate':
+      return '園區入口大門';
+    default:
+      return '園區設施';
+  }
+}
+
+export function pickVisitorDestinationPlan(
+  visitor: VisitorInstance,
+  grid: ParkTile[][],
+  weather: WeatherType,
+  isNight: boolean,
+  excludePos?: { x: number; y: number }
+): VisitorDestinationPlan | null {
+  const vx = Math.round(visitor.x);
+  const vy = Math.round(visitor.y);
+
+  interface Candidate {
+    plan: VisitorDestinationPlan;
+    weight: number;
+    isCurrentAdjacent: boolean;
+  }
+  const candidates: Candidate[] = [];
+
+  for (let y = 0; y < GRID_ROWS; y++) {
+    for (let x = 0; x < GRID_COLS; x++) {
+      const tile = grid[y][x];
+      if (!tile.connected) continue;
+      if (excludePos && excludePos.x === x && excludePos.y === y) continue;
+
+      const isTargetType =
+        tile.type === 'habitat' ||
+        tile.type === 'snack' ||
+        tile.type === 'souvenir' ||
+        tile.type === 'fountain' ||
+        tile.type === 'restroom' ||
+        tile.type === 'pavilion' ||
+        tile.type === 'bench' ||
+        tile.type === 'landmark';
+      if (!isTargetType) continue;
+
+      const walkSpot = findNearestPathTileAdjacentTo(grid, x, y);
+      if (!walkSpot) continue;
+
+      const label = getTileFacilityLabel(tile);
+      const isCurrentAdjacent = Math.abs(x - vx) + Math.abs(y - vy) <= 1;
+      let weight = 1;
+      let reason = `想散步逛去「${label}」看看`;
+
+      if (tile.type === 'habitat' && tile.habitat) {
+        const spec = ANIMAL_SPECIES[tile.habitat.speciesId];
+        const animalCount = tile.habitat.animals.length;
+        if (animalCount === 0) {
+          weight = 0.35;
+          reason = `好奇去看看「${label}」的生態佈置`;
+        } else {
+          weight = 3.2 + animalCount * 0.8 + (tile.habitat.level - 1) * 0.6;
+          if (visitor.archetype === 'photographer' || visitor.archetype === 'couple') {
+            weight *= 1.35;
+            reason = `想近距離拍攝「${spec.name}」可愛模樣`;
+          } else if (visitor.archetype === 'researcher' || visitor.archetype === 'artist') {
+            weight *= 1.3;
+            reason = `想仔細觀察「${spec.name}」的生態習性`;
+          } else if (weather === 'rainy' && tile.habitat.biome === 'rainforest') {
+            weight *= 1.3;
+            reason = `想看雨林區的「${spec.name}」在雨中的模樣`;
+          } else if (isNight) {
+            reason = `想趁夜色聚光燈欣賞「${spec.name}」`;
+          } else {
+            reason = `想去「${label}」看${spec.name}互動`;
+          }
+        }
+      } else if (tile.type === 'snack') {
+        if (visitor.hasBoughtSnack) {
+          weight = 0.25;
+        } else {
+          weight = visitor.hunger > 45 ? 4.8 : visitor.archetype === 'foodie' ? 4.2 : 1.6;
+        }
+        if (weather === 'heatwave') {
+          weight *= 1.35;
+          reason = '想買點心與冰飲消暑解渴';
+        } else if (isNight) {
+          reason = '想買熱食暖胃繼續夜遊';
+        } else {
+          reason = '嘴饞了，想去買園區限定輕食';
+        }
+      } else if (tile.type === 'souvenir') {
+        weight = visitor.hasBoughtSouvenir
+          ? 0.3
+          : visitor.archetype === 'tourist' || visitor.archetype === 'vip'
+          ? 3.8
+          : 1.9;
+        reason = '想挑幾個可愛的動物周邊紀念品';
+      } else if (tile.type === 'fountain') {
+        weight = weather === 'heatwave' ? 3.8 : isNight ? 2.8 : 1.7;
+        reason =
+          weather === 'heatwave'
+            ? '想去噴泉水霧旁吹風降溫'
+            : isNight
+            ? '想欣賞夜晚的噴泉燈光造景'
+            : '想去噴泉廣場吹吹風放鬆一下';
+      } else if (tile.type === 'pavilion') {
+        weight =
+          weather === 'rainy' || weather === 'heatwave'
+            ? 4.0
+            : visitor.energy < 65
+            ? 3.2
+            : 1.4;
+        reason =
+          weather === 'rainy'
+            ? '想去觀景涼亭稍微避雨歇息'
+            : weather === 'heatwave'
+            ? '想去涼亭遮陽納涼喘口氣'
+            : '想在觀景涼亭小憩欣賞風景';
+      } else if (tile.type === 'bench') {
+        weight = visitor.energy < 62 ? 3.5 : 0.9;
+        reason = '走累了，想找張樹蔭長椅坐下休息';
+      } else if (tile.type === 'restroom') {
+        weight = visitor.energy < 75 ? 1.8 : 1.1;
+        reason = '想去洗手間整理一下儀容再繼續逛';
+      } else if (tile.type === 'landmark') {
+        weight = visitor.archetype === 'photographer' || visitor.archetype === 'tourist' ? 3.6 : 2.3;
+        reason = '想去金色導覽地標前打卡留念';
+      }
+
+      candidates.push({
+        plan: {
+          label,
+          tileType: tile.type,
+          x,
+          y,
+          walkTileX: walkSpot[0],
+          walkTileY: walkSpot[1],
+          reason,
+          speciesId: tile.habitat?.speciesId,
+        },
+        weight: Math.max(0.1, weight),
+        isCurrentAdjacent,
+      });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  const nonAdjacent = candidates.filter((c) => !c.isCurrentAdjacent);
+  const pool = nonAdjacent.length > 0 ? nonAdjacent : candidates;
+  const totalWeight = pool.reduce((sum, c) => sum + c.weight, 0);
+  let r = Math.random() * totalWeight;
+  for (const c of pool) {
+    r -= c.weight;
+    if (r <= 0) return c.plan;
+  }
+  return pool[pool.length - 1].plan;
 }
 
 export function createInitialGrid(mode: DifficultyMode): ParkTile[][] {
@@ -381,7 +557,8 @@ export function computeParkMetrics(
   grid: ParkTile[][],
   ticketPrice: number,
   weather: WeatherType = 'sunny',
-  avgVisitorMood = 82
+  avgVisitorMood = 82,
+  goldenGuideUnlocked = false
 ) {
   let totalAppeal = 0;
   let habitatCount = 0;
@@ -460,6 +637,7 @@ export function computeParkMetrics(
       fountainCount * 0.08
   );
   const landmarkBonus = Math.min(0.3, landmarkCount * 0.15);
+  const guideServiceBonus = goldenGuideUnlocked ? 0.08 : 0;
   const pricePenalty = ticketPrice > 25 ? Math.max(0, (ticketPrice - 25) * 0.03) : 0;
   const moodBonus = ((avgVisitorMood - 75) / 100) * 0.45;
   const weatherMitigation =
@@ -474,6 +652,7 @@ export function computeParkMetrics(
     diversityBonus +
     amenityBonus +
     landmarkBonus +
+    guideServiceBonus +
     moodBonus +
     weatherSpec.ratingModifier +
     weatherMitigation -

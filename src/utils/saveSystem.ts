@@ -51,6 +51,7 @@ export interface ZooSavePayload {
   visitorTypeCounts: Record<VisitorArchetype, number>;
   cultivatedSpecies: Partial<Record<SpeciesId, CultivatedSpeciesRecord>>;
   landmarkUnlocked: boolean;
+  goldenGuideUnlocked?: boolean;
   keepers: KeeperInstance[];
   completedMilestones: string[];
   victoryDismissed: boolean;

@@ -90,6 +90,7 @@ interface InspectorPanelProps {
   cultivatedSpecies: Partial<Record<SpeciesId, CultivatedSpeciesRecord>>;
   photoAlbum: PhotoAlbumEntry[];
   landmarkUnlocked: boolean;
+  goldenGuideUnlocked: boolean;
   keepers: KeeperInstance[];
   completedMilestones: string[];
   logs: ParkLogEntry[];
@@ -163,6 +164,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   cultivatedSpecies,
   photoAlbum,
   landmarkUnlocked,
+  goldenGuideUnlocked,
   keepers,
   completedMilestones,
   logs,
@@ -966,6 +968,72 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               」
             </p>
           </div>
+
+          {goldenGuideUnlocked ? (
+            <div className="pt-2 border-t border-[#E2DDD3] space-y-2">
+              <div className="p-2.5 rounded-xl bg-gradient-to-br from-amber-50 via-yellow-50/70 to-sky-50 border border-amber-300 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Award className="w-4 h-4 text-amber-600 shrink-0" />
+                    金牌嚮導證 · 未來動向透視
+                  </span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    導覽加成生效中
+                  </span>
+                </div>
+                {selectedVisitor.plannedDestination ? (
+                  <div className="bg-white/90 border border-amber-200 rounded-lg p-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-[#5B6D60]">接下來預計前往</p>
+                        <p className="text-xs font-bold text-sky-900 truncate">
+                          {selectedVisitor.plannedDestination.label}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onSelectHabitatPos(
+                            selectedVisitor.plannedDestination!.x,
+                            selectedVisitor.plannedDestination!.y
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-md bg-sky-700 hover:bg-sky-800 text-white text-[11px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
+                      >
+                        <MapPin className="w-3 h-3" />
+                        定位設施
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-[#4A5D50] leading-relaxed">
+                      原因：{selectedVisitor.plannedDestination.reason}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-amber-900/90 bg-white/80 border border-amber-200/80 rounded-lg px-2.5 py-1.5">
+                    正在園區內悠閒漫步，準備挑選下一個想逛的設施。
+                  </p>
+                )}
+                <p className="text-[10.5px] text-amber-900/85">
+                  ✨ 持有金牌嚮導證時點擊園內遊客，會主動提供貼心導覽提升滿意度與評分。
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-2 border-t border-[#E2DDD3]">
+              <div className="p-2.5 rounded-xl bg-white border border-dashed border-[#D5CFC2] text-[11px] text-[#5B6D60] flex items-start gap-2">
+                <Award className="w-4 h-4 text-[#8A988E] shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-[#1A2B20] block">
+                    未解鎖「金牌嚮導證」
+                  </span>
+                  <span>
+                    達成「遊客圖鑑大師」（集滿 {VISITOR_ARCHETYPE_IDS.length}{' '}
+                    種遊客）後，點擊遊客即可查看未來想前往的設施並提升滿意度。
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
     );
@@ -1433,6 +1501,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         return metrics.totalAnimals;
       case 'rating':
         return metrics.rating;
+      case 'visitor_types':
+        return VISITOR_ARCHETYPE_IDS.filter((id) => (visitorTypeCounts[id] || 0) > 0).length;
       default:
         return 0;
     }
@@ -1598,18 +1668,19 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           })}
         </div>
 
-        {/* Golden Guide Landmark Unlock Reward Banner */}
+        {/* Golden Guide Pass & Landmark Unlock Reward Banner */}
         {(() => {
           const collectedCount = VISITOR_ARCHETYPE_IDS.filter(
             (id) => (visitorTypeCounts[id] || 0) > 0
           ).length;
           const totalTypes = VISITOR_ARCHETYPE_IDS.length;
           const pct = Math.round((collectedCount / totalTypes) * 100);
+          const allUnlocked = landmarkUnlocked || goldenGuideUnlocked;
           return (
             <div
               className={`mt-2 p-2.5 rounded-xl border text-xs ${
-                landmarkUnlocked
-                  ? 'bg-amber-50 border-amber-300 text-amber-950'
+                allUnlocked
+                  ? 'bg-gradient-to-br from-amber-50 to-sky-50/70 border-amber-300 text-amber-950'
                   : 'bg-[#FAF9F5] border-[#E2DDD3] text-[#4A5D50]'
               }`}
             >
@@ -1617,13 +1688,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <span className="font-bold flex items-center gap-1.5">
                   <Award
                     className={`w-4 h-4 shrink-0 ${
-                      landmarkUnlocked ? 'text-amber-600' : 'text-[#8A988E]'
+                      allUnlocked ? 'text-amber-600' : 'text-[#8A988E]'
                     }`}
                   />
                   <span>
-                    {landmarkUnlocked
-                      ? '已解鎖「金色導覽地標」'
-                      : '全遊客收集獎勵：金色導覽地標'}
+                    {allUnlocked
+                      ? '遊客圖鑑大師 · 已解鎖金牌嚮導證'
+                      : '遊客圖鑑大師獎勵：金牌嚮導證'}
                   </span>
                 </span>
                 {landmarkUnlocked ? (
@@ -1640,11 +1711,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   </span>
                 )}
               </div>
-              {landmarkUnlocked ? (
-                <p className="text-[11px] text-amber-900 mt-1">
-                  每座連接步道可增加 +{FACILITY_COSTS.landmarkAppeal} 園區魅力並提升評分（目前園區已有{' '}
-                  {metrics.landmarkCount} 座）
-                </p>
+              {allUnlocked ? (
+                <div className="text-[11px] text-amber-900 mt-1.5 space-y-1">
+                  <p className="font-semibold text-sky-900">
+                    🏅 金牌嚮導證生效中：在園區點擊任意遊客即可透視其未來想前往的設施，並立即提供導覽提升滿意度！
+                  </p>
+                  <p>
+                    🏛️ 同時已解鎖「金色導覽地標」：每座連接步道可增加 +{FACILITY_COSTS.landmarkAppeal}{' '}
+                    園區魅力並提升評分（目前已有 {metrics.landmarkCount} 座）
+                  </p>
+                </div>
               ) : (
                 <div className="mt-1.5">
                   <div className="h-1.5 bg-[#E2DDD3] rounded-full overflow-hidden">
@@ -1654,7 +1730,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     />
                   </div>
                   <p className="text-[11px] text-[#6A7B6F] mt-1">
-                    集滿全部 {totalTypes} 種遊客類型，即可解鎖特殊裝飾「金色導覽地標」
+                    集滿全部 {totalTypes}{' '}
+                    種遊客類型，即可達成「遊客圖鑑大師」解鎖專屬「金牌嚮導證」與「金色導覽地標」
                   </p>
                 </div>
               )}

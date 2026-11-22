@@ -71,6 +71,7 @@ interface ParkCanvas3DProps {
   activeTool: BuildTool;
   selectedPos: { x: number; y: number } | null;
   selectedVisitorId: string | null;
+  goldenGuideUnlocked?: boolean;
   visitors: VisitorInstance[];
   keepers: KeeperInstance[];
   popups: FloatingPopup[];
@@ -90,6 +91,7 @@ interface ProjectedLabel {
   text: string;
   subText?: string;
   dialogue?: string;
+  nextFacility?: string;
   moodPct?: number;
   moodTone?: 'emerald' | 'sky' | 'amber' | 'rose';
   selected?: boolean;
@@ -426,6 +428,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
   activeTool,
   selectedPos,
   selectedVisitorId,
+  goldenGuideUnlocked = false,
   visitors,
   keepers,
   popups,
@@ -494,6 +497,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     touchPaintMode,
     selectedPos,
     selectedVisitorId,
+    goldenGuideUnlocked,
     visitors,
     keepers,
     popups,
@@ -514,6 +518,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     touchPaintMode,
     selectedPos,
     selectedVisitorId,
+    goldenGuideUnlocked,
     visitors,
     keepers,
     popups,
@@ -789,7 +794,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
 
     const hoverFrame = makeTileFrame('#34D399', 0.032);
     const selectedFrame = makeTileFrame('#F59E0B', 0.036);
-    scene.add(hoverFrame, selectedFrame);
+    const guideTargetFrame = makeTileFrame('#38BDF8', 0.042);
+    scene.add(hoverFrame, selectedFrame, guideTargetFrame);
 
     // Dynamic actors containers
     const actorsGroup = new THREE.Group();
@@ -1541,6 +1547,28 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         selectedFrame.visible = true;
       } else {
         selectedFrame.visible = false;
+      }
+
+      const selectedVisitorObj = s.selectedVisitorId
+        ? s.visitors.find((v) => v.id === s.selectedVisitorId)
+        : undefined;
+      if (
+        !s.photoMode &&
+        s.goldenGuideUnlocked &&
+        selectedVisitorObj &&
+        selectedVisitorObj.plannedDestination
+      ) {
+        const dest = selectedVisitorObj.plannedDestination;
+        const [gx, gz] = gridToWorld(dest.x, dest.y);
+        guideTargetFrame.position.x = gx;
+        guideTargetFrame.position.z = gz;
+        guideTargetFrame.visible = true;
+        const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4.5);
+        const guideScale = 0.96 + pulse * 0.09;
+        guideTargetFrame.scale.set(guideScale, guideScale, 1);
+        (guideTargetFrame.material as THREE.MeshBasicMaterial).opacity = 0.62 + pulse * 0.32;
+      } else {
+        guideTargetFrame.visible = false;
       }
 
       // 3. Sync Animals with prop/wall collision avoidance, sibling separation & 14 signature actions
@@ -2347,6 +2375,10 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                 y: ((-_projVec.y + 1) / 2) * ch,
                 text: `${vis.name} · ${moodInfo.label} ${Math.round(vis.mood)}%`,
                 dialogue: vis.thought || undefined,
+                nextFacility:
+                  s.goldenGuideUnlocked && vis.plannedDestination
+                    ? vis.plannedDestination.label
+                    : undefined,
                 moodPct: Math.round(vis.mood),
                 moodTone: moodInfo.tone,
                 selected: true,
@@ -2440,8 +2472,10 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
 
       const prevHoverVis = hoverFrame.visible;
       const prevSelVis = selectedFrame.visible;
+      const prevGuideVis = guideTargetFrame.visible;
       hoverFrame.visible = false;
       selectedFrame.visible = false;
+      guideTargetFrame.visible = false;
 
       try {
         const cssCapW = Math.min(280, Math.floor(_thumbVpSize.x));
@@ -2481,6 +2515,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
         renderer.setViewport(0, 0, _thumbVpSize.x, _thumbVpSize.y);
         hoverFrame.visible = prevHoverVis;
         selectedFrame.visible = prevSelVis;
+        guideTargetFrame.visible = prevGuideVis;
       }
     }
 
@@ -2892,6 +2927,11 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                   {lbl.selected && lbl.text && (
                     <span className="mt-0.5 text-[11px] font-bold whitespace-nowrap text-[#FDE68A] [text-shadow:0_1px_3px_rgba(0,0,0,0.95),0_0_6px_rgba(0,0,0,0.85)]">
                       {lbl.text}
+                    </span>
+                  )}
+                  {lbl.selected && lbl.nextFacility && (
+                    <span className="mt-0.5 px-2 py-0.5 rounded bg-sky-950/90 border border-sky-300/70 text-[10.5px] font-bold whitespace-nowrap text-sky-100 shadow-sm">
+                      🏅 想去：{lbl.nextFacility}
                     </span>
                   )}
                 </div>
