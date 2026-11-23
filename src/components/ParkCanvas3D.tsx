@@ -95,8 +95,9 @@ interface ProjectedLabel {
   moodPct?: number;
   moodTone?: 'emerald' | 'sky' | 'amber' | 'rose';
   selected?: boolean;
-  kind: 'popup' | 'thought' | 'alert' | 'heart' | 'stargaze' | 'visitor';
+  kind: 'popup' | 'thought' | 'alert' | 'heart' | 'stargaze' | 'visitor' | 'weather_comfort';
   tone?: FloatingPopup['tone'];
+  weatherType?: 'rainy' | 'heatwave';
 }
 
 interface AnimalActorEntry {
@@ -417,7 +418,7 @@ function resolveSolidTileCollisions(
   return [x, z];
 }
 
-export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
+export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = React.memo(({
   grid,
   weather,
   seasonalEvent,
@@ -576,7 +577,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.06;
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -624,8 +625,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     const sunLight = new THREE.DirectionalLight('#FFF5DF', 1.5);
     sunLight.position.set(17, 24, 15);
     sunLight.castShadow = !isSoftwareGl;
-    sunLight.shadow.mapSize.width = 2048;
-    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.mapSize.width = 1024;
+    sunLight.shadow.mapSize.height = 1024;
     sunLight.shadow.camera.near = 2;
     sunLight.shadow.camera.far = 64;
     const d = 19;
@@ -813,17 +814,14 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     const MAX_PUDDLES = GRID_COLS * GRID_ROWS * 2;
     const puddleGeo = new THREE.PlaneGeometry(1, 1);
     puddleGeo.rotateX(-Math.PI / 2);
-    const puddleMat = new THREE.MeshPhysicalMaterial({
+    const puddleMat = new THREE.MeshStandardMaterial({
       color: '#8CB6D9',
       alphaMap: puddleMaskTex,
       transparent: true,
       opacity: 0,
-      roughness: 0.04,
-      metalness: 0.55,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.03,
-      reflectivity: 1.0,
-      envMapIntensity: 2.45,
+      roughness: 0.08,
+      metalness: 0.48,
+      envMapIntensity: 2.2,
       bumpMap: waterRippleTex,
       bumpScale: 0.018,
       depthWrite: false,
@@ -871,6 +869,7 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     const _puddleInstColor = new THREE.Color();
     const _dayPuddleSky = new THREE.Color('#8CB6D9');
     const _nightPuddleSky = new THREE.Color('#344E6B');
+    const _nightPuddleLanternTint = new THREE.Color('#FFD89B');
     const _roadWetColor = new THREE.Color();
     const _roadBaseColor = new THREE.Color();
     const _roadDarkWetTint = new THREE.Color('#8A97A4');
@@ -1183,8 +1182,13 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       lastRaycastTime = now;
 
       const cell = pickGridCell(e);
-      hoveredCell = cell;
-      setHoveredTileInfo(cell);
+      if (
+        (hoveredCell?.x ?? -1) !== (cell?.x ?? -1) ||
+        (hoveredCell?.y ?? -1) !== (cell?.y ?? -1)
+      ) {
+        hoveredCell = cell;
+        setHoveredTileInfo(cell);
+      }
 
       if (
         (paintDragActive || (e.buttons === 1 && e.shiftKey)) &&
@@ -1413,6 +1417,39 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
     let rainBlend = 0;
     let heatBlend = 0;
     let lastAppliedWetness = -1;
+    let lastTileSyncGrid: ParkTile[][] | null = null;
+    let lastTileSyncSeasonal: SeasonalEventId | null | undefined = undefined;
+    let lastTileSyncMoodInt = -1;
+    let roadMeshes: THREE.Mesh[] = [];
+    let activeAuraEntries: Array<{ aura: THREE.Mesh; x: number; y: number }> = [];
+    let prevHoveredSlotIdx = -1;
+    const settlingSlotCoords = new Set<number>();
+    let prevProjectedLabels: ProjectedLabel[] = [];
+
+    function projectedLabelsEqual(a: ProjectedLabel[], b: ProjectedLabel[]): boolean {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        const la = a[i];
+        const lb = b[i];
+        if (
+          la.id !== lb.id ||
+          la.x !== lb.x ||
+          la.y !== lb.y ||
+          la.text !== lb.text ||
+          la.subText !== lb.subText ||
+          la.dialogue !== lb.dialogue ||
+          la.nextFacility !== lb.nextFacility ||
+          la.selected !== lb.selected ||
+          la.moodPct !== lb.moodPct ||
+          la.kind !== lb.kind ||
+          la.tone !== lb.tone ||
+          la.weatherType !== lb.weatherType
+        ) {
+          return false;
+        }
+      }
+      return true;
+    }
 
     function syncSceneObjects(delta: number, elapsed: number) {
       const s = stateRef.current;
@@ -1426,98 +1463,158 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       grassField.timeUniform.value = grassTimeAccum;
 
       // 1. Sync Grid Tiles & Hover lift + Thriving Aura + Seasonal Tile Effects
-      let gridStructureChanged = false;
-      for (let y = 0; y < GRID_ROWS; y++) {
-        for (let x = 0; x < GRID_COLS; x++) {
-          const tile = s.grid[y][x];
-          const slot = tileSlotGroups[y][x];
-          const hasSeasonal = shouldShowSeasonalTileEffect(x, y, tile.type, s.seasonalEvent);
-          const seasonalSig = hasSeasonal && s.seasonalEvent ? s.seasonalEvent : 'none';
-          const vegTier =
-            tile.type === 'habitat' && tile.habitat
-              ? getHabitatVegetationInfo(tile.habitat.biome, tile.habitat.animals).tier
-              : 0;
-          const sig =
-            tile.type === 'habitat' && tile.habitat
-              ? `hab_${tile.habitat.speciesId}_${tile.habitat.level}_${tile.connected ? 1 : 0}_${
-                  tile.habitat.autoFeeder ? (tile.habitat.autoFeederEnabled ? 2 : 1) : 0
-                }_${tile.habitat.autoCleaner ? (tile.habitat.autoCleanerEnabled ? 2 : 1) : 0}_veg${vegTier}_${seasonalSig}`
-              : `${tile.type}_${tile.floorType ?? 'stone'}_${tile.connected ? 1 : 0}_${seasonalSig}`;
+      const moodInt = Math.round(s.avgVisitorMood);
+      const needsTileScan =
+        s.grid !== lastTileSyncGrid ||
+        s.seasonalEvent !== lastTileSyncSeasonal ||
+        moodInt !== lastTileSyncMoodInt;
 
-          if (tileSlotSignatures[y][x] !== sig) {
-            tileSlotSignatures[y][x] = sig;
-            gridStructureChanged = true;
-            while (slot.children.length > 0) {
-              slot.remove(slot.children[0]);
-            }
-            if (tile.type === 'habitat' && tile.habitat) {
-              slot.add(
-                buildHabitatZoneMesh(tile.habitat.speciesId, tile.habitat.level, maxAniso, {
-                  autoFeeder: tile.habitat.autoFeeder,
-                  autoFeederEnabled: tile.habitat.autoFeederEnabled,
-                  autoCleaner: tile.habitat.autoCleaner,
-                  autoCleanerEnabled: tile.habitat.autoCleanerEnabled,
-                })
-              );
-              if (vegTier > 0) {
-                slot.add(
-                  buildHabitatVegetationLayer(
-                    tile.habitat.biome,
-                    tile.habitat.level,
-                    vegTier,
-                    x,
-                    y
-                  )
-                );
+      let gridStructureChanged = false;
+      if (needsTileScan) {
+        lastTileSyncGrid = s.grid;
+        lastTileSyncSeasonal = s.seasonalEvent;
+        lastTileSyncMoodInt = moodInt;
+        const nextAuraEntries: Array<{ aura: THREE.Mesh; x: number; y: number }> = [];
+
+        for (let y = 0; y < GRID_ROWS; y++) {
+          for (let x = 0; x < GRID_COLS; x++) {
+            const tile = s.grid[y][x];
+            const slot = tileSlotGroups[y][x];
+            const hasSeasonal = shouldShowSeasonalTileEffect(x, y, tile.type, s.seasonalEvent);
+            const seasonalSig = hasSeasonal && s.seasonalEvent ? s.seasonalEvent : 'none';
+            const vegTier =
+              tile.type === 'habitat' && tile.habitat
+                ? getHabitatVegetationInfo(tile.habitat.biome, tile.habitat.animals).tier
+                : 0;
+            const sig =
+              tile.type === 'habitat' && tile.habitat
+                ? `hab_${tile.habitat.speciesId}_${tile.habitat.level}_${tile.connected ? 1 : 0}_${
+                    tile.habitat.autoFeeder ? (tile.habitat.autoFeederEnabled ? 2 : 1) : 0
+                  }_${tile.habitat.autoCleaner ? (tile.habitat.autoCleanerEnabled ? 2 : 1) : 0}_veg${vegTier}_${seasonalSig}`
+                : `${tile.type}_${tile.floorType ?? 'stone'}_${tile.connected ? 1 : 0}_${seasonalSig}`;
+
+            if (tileSlotSignatures[y][x] !== sig) {
+              tileSlotSignatures[y][x] = sig;
+              gridStructureChanged = true;
+              while (slot.children.length > 0) {
+                slot.remove(slot.children[0]);
               }
-            } else if (tile.type !== 'grass' && tile.type !== 'habitat') {
-              slot.add(buildFacilityMesh(tile.type, tile.connected, maxAniso, tile.floorType ?? 'stone'));
+              if (tile.type === 'habitat' && tile.habitat) {
+                slot.add(
+                  buildHabitatZoneMesh(tile.habitat.speciesId, tile.habitat.level, maxAniso, {
+                    autoFeeder: tile.habitat.autoFeeder,
+                    autoFeederEnabled: tile.habitat.autoFeederEnabled,
+                    autoCleaner: tile.habitat.autoCleaner,
+                    autoCleanerEnabled: tile.habitat.autoCleanerEnabled,
+                  })
+                );
+                if (vegTier > 0) {
+                  slot.add(
+                    buildHabitatVegetationLayer(
+                      tile.habitat.biome,
+                      tile.habitat.level,
+                      vegTier,
+                      x,
+                      y
+                    )
+                  );
+                }
+              } else if (tile.type !== 'grass' && tile.type !== 'habitat') {
+                slot.add(buildFacilityMesh(tile.type, tile.connected, maxAniso, tile.floorType ?? 'stone'));
+              }
+              if (hasSeasonal && s.seasonalEvent) {
+                slot.add(buildSeasonalTileOverlay(s.seasonalEvent, tile.type, x, y));
+              }
             }
-            if (hasSeasonal && s.seasonalEvent) {
-              slot.add(buildSeasonalTileOverlay(s.seasonalEvent, tile.type, x, y));
+
+            const aura = auraRings[y][x];
+            if (aura) {
+              const hab = tile.habitat;
+              const hasLowNeed =
+                hab &&
+                (hab.cleanliness < 40 ||
+                  hab.animals.some((a) => a.hunger < 40 || a.happiness < 40));
+              const thriving = Boolean(
+                hab &&
+                  tile.connected &&
+                  hab.animals.length > 0 &&
+                  !hasLowNeed &&
+                  s.avgVisitorMood >= 84 &&
+                  hab.cleanliness >= 65 &&
+                  hab.animals.every((a) => a.happiness >= 65)
+              );
+              aura.visible = thriving;
+              if (thriving) {
+                nextAuraEntries.push({ aura, x, y });
+              }
             }
           }
+        }
+        activeAuraEntries = nextAuraEntries;
+      }
 
-          const isHoveredHere = hoveredCell?.x === x && hoveredCell?.y === y;
+      // Track only hovered & settling habitat slots instead of damping all 72 slots per frame
+      const currHoverIdx = hoveredCell ? hoveredCell.y * GRID_COLS + hoveredCell.x : -1;
+      if (currHoverIdx !== prevHoveredSlotIdx) {
+        if (prevHoveredSlotIdx >= 0) settlingSlotCoords.add(prevHoveredSlotIdx);
+        if (currHoverIdx >= 0) settlingSlotCoords.add(currHoverIdx);
+        prevHoveredSlotIdx = currHoverIdx;
+      }
+      if (settlingSlotCoords.size > 0) {
+        for (const coord of Array.from(settlingSlotCoords)) {
+          const sx = coord % GRID_COLS;
+          const sy = Math.floor(coord / GRID_COLS);
+          const tile = s.grid[sy]?.[sx];
+          const slot = tileSlotGroups[sy]?.[sx];
+          if (!tile || !slot) {
+            settlingSlotCoords.delete(coord);
+            continue;
+          }
+          const isHoveredHere = hoveredCell?.x === sx && hoveredCell?.y === sy;
           const targetScale = tile.type === 'habitat' && isHoveredHere ? 1.03 : 1.0;
           const targetY = tile.type === 'habitat' && isHoveredHere ? 0.04 : 0.0;
           slot.scale.x = THREE.MathUtils.damp(slot.scale.x, targetScale, 12, delta);
           slot.scale.y = THREE.MathUtils.damp(slot.scale.y, targetScale, 12, delta);
           slot.scale.z = THREE.MathUtils.damp(slot.scale.z, targetScale, 12, delta);
           slot.position.y = THREE.MathUtils.damp(slot.position.y, targetY, 12, delta);
-
-          const aura = auraRings[y][x];
-          if (aura) {
-            const hab = tile.habitat;
-            const hasLowNeed =
-              hab &&
-              (hab.cleanliness < 40 ||
-                hab.animals.some((a) => a.hunger < 40 || a.happiness < 40));
-            const thriving = Boolean(
-              hab &&
-                tile.connected &&
-                hab.animals.length > 0 &&
-                !hasLowNeed &&
-                s.avgVisitorMood >= 84 &&
-                hab.cleanliness >= 65 &&
-                hab.animals.every((a) => a.happiness >= 65)
-            );
-            aura.visible = thriving;
-            if (thriving) {
-              const wave = 0.5 + 0.5 * Math.sin(elapsed * 3.0 + x * 0.6 + y * 0.4);
-              const auraMat = aura.material as THREE.MeshBasicMaterial;
-              auraMat.opacity = isHoveredHere ? 0.92 : 0.42 + wave * 0.42;
-              const aScale = isHoveredHere ? 1.07 : 0.98 + wave * 0.06;
-              aura.scale.set(aScale, aScale, 1);
-            }
+          if (
+            !isHoveredHere &&
+            Math.abs(slot.scale.x - 1.0) < 0.0005 &&
+            Math.abs(slot.position.y) < 0.0005
+          ) {
+            slot.scale.set(1, 1, 1);
+            slot.position.y = 0;
+            settlingSlotCoords.delete(coord);
           }
         }
+      }
+
+      // Pulse only thriving habitat aura rings
+      for (let i = 0; i < activeAuraEntries.length; i++) {
+        const entry = activeAuraEntries[i];
+        const isHoveredHere = hoveredCell?.x === entry.x && hoveredCell?.y === entry.y;
+        const wave = 0.5 + 0.5 * Math.sin(elapsed * 3.0 + entry.x * 0.6 + entry.y * 0.4);
+        const auraMat = entry.aura.material as THREE.MeshBasicMaterial;
+        auraMat.opacity = isHoveredHere ? 0.92 : 0.42 + wave * 0.42;
+        const aScale = isHoveredHere ? 1.07 : 0.98 + wave * 0.06;
+        entry.aura.scale.set(aScale, aScale, 1);
       }
 
       if (gridStructureChanged) {
         grassField.syncGridVisibility(s.grid);
         rebuildPuddleLayout(s.grid);
         lastAppliedWetness = -1;
+        const nextRoads: THREE.Mesh[] = [];
+        for (let y = 0; y < GRID_ROWS; y++) {
+          for (let x = 0; x < GRID_COLS; x++) {
+            tileSlotGroups[y][x].traverse((obj) => {
+              if (obj instanceof THREE.Mesh && obj.userData.isRoadSurface) {
+                nextRoads.push(obj);
+              }
+            });
+          }
+        }
+        roadMeshes = nextRoads;
       }
 
       // 2. Hover & Selection Frames (hidden in Photo Mode)
@@ -1940,24 +2037,18 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       if (Math.abs(rainBlend - lastAppliedWetness) > 0.012 || (rainBlend < 0.01 && lastAppliedWetness !== 0)) {
         lastAppliedWetness = rainBlend < 0.01 ? 0 : rainBlend;
         const wetAmt = lastAppliedWetness;
-        for (let y = 0; y < GRID_ROWS; y++) {
-          for (let x = 0; x < GRID_COLS; x++) {
-            const slot = tileSlotGroups[y][x];
-            slot.traverse((obj) => {
-              if (obj instanceof THREE.Mesh && obj.userData.isRoadSurface) {
-                const mat = obj.material as THREE.MeshStandardMaterial;
-                const baseRough = (obj.userData.baseRoughness as number) ?? 0.86;
-                const baseMetal = (obj.userData.baseMetalness as number) ?? 0.04;
-                const baseHex = (obj.userData.baseColorHex as string) ?? '#FFFFFF';
-                mat.roughness = THREE.MathUtils.lerp(baseRough, 0.24, wetAmt);
-                mat.metalness = THREE.MathUtils.lerp(baseMetal, 0.2, wetAmt);
-                mat.envMapIntensity = THREE.MathUtils.lerp(1.0, 1.55, wetAmt);
-                _roadBaseColor.set(baseHex);
-                _roadWetColor.copy(_roadBaseColor).lerp(_roadDarkWetTint, wetAmt * 0.26);
-                mat.color.copy(_roadWetColor);
-              }
-            });
-          }
+        for (let i = 0; i < roadMeshes.length; i++) {
+          const obj = roadMeshes[i];
+          const mat = obj.material as THREE.MeshStandardMaterial;
+          const baseRough = (obj.userData.baseRoughness as number) ?? 0.86;
+          const baseMetal = (obj.userData.baseMetalness as number) ?? 0.04;
+          const baseHex = (obj.userData.baseColorHex as string) ?? '#FFFFFF';
+          mat.roughness = THREE.MathUtils.lerp(baseRough, 0.24, wetAmt);
+          mat.metalness = THREE.MathUtils.lerp(baseMetal, 0.2, wetAmt);
+          mat.envMapIntensity = THREE.MathUtils.lerp(1.0, 1.55, wetAmt);
+          _roadBaseColor.set(baseHex);
+          _roadWetColor.copy(_roadBaseColor).lerp(_roadDarkWetTint, wetAmt * 0.26);
+          mat.color.copy(_roadWetColor);
         }
       }
 
@@ -1966,13 +2057,13 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       puddleMesh.visible = showPuddles;
       if (showPuddles) {
         puddleMat.opacity = rainBlend * (0.78 + 0.06 * Math.sin(weatherAnimAccum * 1.4));
-        puddleMat.envMapIntensity = THREE.MathUtils.lerp(2.45, 1.85, nightBlend);
+        puddleMat.envMapIntensity = THREE.MathUtils.lerp(2.2, 1.7, nightBlend);
         puddleMat.color.copy(_dayPuddleSky).lerp(_nightPuddleSky, nightBlend);
 
         // Subtle warm lantern shimmer in puddles near gate/spotlights at night
         for (let i = 0; i < activePuddleSpots.length; i++) {
           if (activePuddleSpots[i].nearGate) {
-            _puddleInstColor.set('#FFFFFF').lerp(new THREE.Color('#FFD89B'), nightBlend * 0.72);
+            _puddleInstColor.set('#FFFFFF').lerp(_nightPuddleLanternTint, nightBlend * 0.72);
             puddleMesh.setColorAt(i, _puddleInstColor);
           }
         }
@@ -2318,8 +2409,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             if (_projVec.z < 1) {
               labels.push({
                 id: p.id,
-                x: ((_projVec.x + 1) / 2) * cw,
-                y: ((-_projVec.y + 1) / 2) * ch,
+                x: Math.round(((_projVec.x + 1) / 2) * cw),
+                y: Math.round(((-_projVec.y + 1) / 2) * ch),
                 text: p.text,
                 kind: 'popup',
                 tone: p.tone,
@@ -2327,7 +2418,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             }
           }
 
-          // Only show floating name, mood, and speech text for the clicked/selected visitor
+          // Show selected visitor labels, plus auto-generated weather comfort speech bubbles near pavilions
+          let activeWeatherBubbleCount = 0;
           for (const vis of s.visitors) {
             const entry = visitorMeshes.get(vis.id);
             if (!entry) continue;
@@ -2339,8 +2431,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
               if (_projVec.z < 1) {
                 labels.push({
                   id: `hr_${vis.id}`,
-                  x: ((_projVec.x + 1) / 2) * cw,
-                  y: ((-_projVec.y + 1) / 2) * ch,
+                  x: Math.round(((_projVec.x + 1) / 2) * cw),
+                  y: Math.round(((-_projVec.y + 1) / 2) * ch),
                   text: '合影留念',
                   kind: 'heart',
                 });
@@ -2354,36 +2446,59 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
               if (_projVec.z < 1) {
                 labels.push({
                   id: `sg_${vis.id}`,
-                  x: ((_projVec.x + 1) / 2) * cw,
-                  y: ((-_projVec.y + 1) / 2) * ch,
+                  x: Math.round(((_projVec.x + 1) / 2) * cw),
+                  y: Math.round(((-_projVec.y + 1) / 2) * ch),
                   text: '✨',
                   kind: 'stargaze',
                 });
               }
             }
 
-            if (vis.id !== s.selectedVisitorId) continue;
-
-            _projVec.copy(entry.mesh.position);
-            _projVec.y += 0.96;
-            _projVec.project(camera);
-            if (_projVec.z < 1) {
-              const moodInfo = getVisitorMoodInfo(vis.mood);
-              labels.push({
-                id: `vis_${vis.id}`,
-                x: ((_projVec.x + 1) / 2) * cw,
-                y: ((-_projVec.y + 1) / 2) * ch,
-                text: `${vis.name} · ${moodInfo.label} ${Math.round(vis.mood)}%`,
-                dialogue: vis.thought || undefined,
-                nextFacility:
-                  s.goldenGuideUnlocked && vis.plannedDestination
-                    ? vis.plannedDestination.label
-                    : undefined,
-                moodPct: Math.round(vis.mood),
-                moodTone: moodInfo.tone,
-                selected: true,
-                kind: 'visitor',
-              });
+            if (vis.id === s.selectedVisitorId) {
+              _projVec.copy(entry.mesh.position);
+              _projVec.y += 0.96;
+              _projVec.project(camera);
+              if (_projVec.z < 1) {
+                const moodInfo = getVisitorMoodInfo(vis.mood);
+                const hasWeatherComfort = (vis.weatherComfortBubbleTicks ?? 0) > 0 && vis.weatherComfortWeather;
+                labels.push({
+                  id: `vis_${vis.id}`,
+                  x: Math.round(((_projVec.x + 1) / 2) * cw),
+                  y: Math.round(((-_projVec.y + 1) / 2) * ch),
+                  text: `${vis.name} · ${moodInfo.label} ${Math.round(vis.mood)}%`,
+                  subText: hasWeatherComfort && vis.weatherComfortBoost ? `心情 +${vis.weatherComfortBoost}%` : undefined,
+                  dialogue: vis.thought || undefined,
+                  nextFacility:
+                    s.goldenGuideUnlocked && vis.plannedDestination
+                      ? vis.plannedDestination.label
+                      : undefined,
+                  moodPct: Math.round(vis.mood),
+                  moodTone: moodInfo.tone,
+                  selected: true,
+                  kind: 'visitor',
+                  weatherType: hasWeatherComfort ? vis.weatherComfortWeather : undefined,
+                });
+              }
+            } else if (
+              (vis.weatherComfortBubbleTicks ?? 0) > 0 &&
+              vis.thought &&
+              activeWeatherBubbleCount < 5
+            ) {
+              _projVec.copy(entry.mesh.position);
+              _projVec.y += 1.02;
+              _projVec.project(camera);
+              if (_projVec.z < 1) {
+                activeWeatherBubbleCount += 1;
+                labels.push({
+                  id: `wc_${vis.id}`,
+                  x: Math.round(((_projVec.x + 1) / 2) * cw),
+                  y: Math.round(((-_projVec.y + 1) / 2) * ch),
+                  text: vis.thought,
+                  subText: `${vis.name} · 心情 +${vis.weatherComfortBoost ?? 9}%`,
+                  kind: 'weather_comfort',
+                  weatherType: vis.weatherComfortWeather,
+                });
+              }
             }
           }
 
@@ -2400,8 +2515,8 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                 if (_projVec.z < 1) {
                   labels.push({
                     id: `al_${x}_${y}`,
-                    x: ((_projVec.x + 1) / 2) * cw,
-                    y: ((-_projVec.y + 1) / 2) * ch,
+                    x: Math.round(((_projVec.x + 1) / 2) * cw),
+                    y: Math.round(((-_projVec.y + 1) / 2) * ch),
                     text: !t.connected ? '未連步道' : '需照護',
                     kind: 'alert',
                     tone: !t.connected ? 'rose' : 'amber',
@@ -2411,7 +2526,10 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             }
           }
 
-          setProjectedLabels(labels);
+          if (!projectedLabelsEqual(prevProjectedLabels, labels)) {
+            prevProjectedLabels = labels;
+            setProjectedLabels(labels);
+          }
         }
       }
     }
@@ -2544,17 +2662,19 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       const delta = Math.min(0.08, clock.getDelta());
       const elapsed = clock.getElapsedTime();
 
-      syncSceneObjects(delta, elapsed);
+      if (!document.hidden) {
+        syncSceneObjects(delta, elapsed);
 
-      if (pendingPhotoQueueRef.current.length > 0) {
-        const req = pendingPhotoQueueRef.current.shift()!;
-        const dataUrl = captureCommemorativePhoto(req);
-        if (dataUrl) {
-          onPhotoCapturedRef.current?.(req.id, dataUrl);
+        if (pendingPhotoQueueRef.current.length > 0) {
+          const req = pendingPhotoQueueRef.current.shift()!;
+          const dataUrl = captureCommemorativePhoto(req);
+          if (dataUrl) {
+            onPhotoCapturedRef.current?.(req.id, dataUrl);
+          }
         }
-      }
 
-      renderer.render(scene, camera);
+        renderer.render(scene, camera);
+      }
 
       if (isSoftwareGl) {
         afterDraw(tick);
@@ -2731,36 +2851,13 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
             <div className="absolute inset-x-0 top-[44%] h-[24%] heat-mirage-refraction bg-gradient-to-b from-transparent via-orange-100/10 to-transparent animate-heat-mirage-reverse" />
             <div className="absolute inset-x-0 bottom-[6%] h-[26%] heat-mirage-refraction bg-gradient-to-t from-orange-300/16 via-amber-100/10 to-transparent animate-heat-mirage" />
 
-            {/* Optical SVG turbulence heat-distortion shimmer waves */}
+            {/* Lightweight SVG thermal wave curves (animated via CSS without heavy SVG turbulence filters) */}
             <svg
-              className="absolute inset-0 w-full h-full opacity-75"
+              className="absolute inset-0 w-full h-full opacity-75 animate-heat-mirage"
               viewBox="0 0 1000 600"
               preserveAspectRatio="none"
             >
               <defs>
-                <filter id="zoo-heat-distortion" x="-5%" y="-5%" width="110%" height="110%">
-                  <feTurbulence
-                    type="fractalNoise"
-                    baseFrequency="0.015 0.055"
-                    numOctaves="2"
-                    seed="7"
-                    result="noise"
-                  >
-                    <animate
-                      attributeName="baseFrequency"
-                      dur="4.6s"
-                      values="0.012 0.045;0.02 0.068;0.012 0.045"
-                      repeatCount="indefinite"
-                    />
-                  </feTurbulence>
-                  <feDisplacementMap
-                    in="SourceGraphic"
-                    in2="noise"
-                    scale="18"
-                    xChannelSelector="R"
-                    yChannelSelector="G"
-                  />
-                </filter>
                 <linearGradient id="zoo-heat-band" x1="0%" y1="100%" x2="0%" y2="0%">
                   <stop offset="0%" stopColor="rgba(253,224,71,0.0)" />
                   <stop offset="45%" stopColor="rgba(254,215,170,0.28)" />
@@ -2768,26 +2865,26 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                 </linearGradient>
               </defs>
 
-              <g className="weather-heat-filter">
+              <g>
                 <rect x="0" y="65" width="1000" height="175" fill="url(#zoo-heat-band)" />
                 <rect x="0" y="255" width="1000" height="165" fill="url(#zoo-heat-band)" opacity="0.72" />
                 <path
                   d="M-40 155 Q 240 128 520 158 T 1040 146"
                   fill="none"
-                  stroke="rgba(255,247,214,0.42)"
-                  strokeWidth="14"
+                  stroke="rgba(255,247,214,0.38)"
+                  strokeWidth="12"
                 />
                 <path
                   d="M-40 315 Q 280 340 560 308 T 1040 326"
                   fill="none"
-                  stroke="rgba(254,215,170,0.34)"
-                  strokeWidth="12"
+                  stroke="rgba(254,215,170,0.32)"
+                  strokeWidth="10"
                 />
                 <path
                   d="M-40 462 Q 260 442 540 466 T 1040 452"
                   fill="none"
-                  stroke="rgba(253,224,71,0.26)"
-                  strokeWidth="10"
+                  stroke="rgba(253,224,71,0.24)"
+                  strokeWidth="9"
                 />
               </g>
             </svg>
@@ -2902,6 +2999,47 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
               );
             }
 
+            if (lbl.kind === 'weather_comfort') {
+              const isHeat = lbl.weatherType === 'heatwave';
+              return (
+                <div
+                  key={lbl.id}
+                  className="absolute flex flex-col items-center z-10"
+                  style={{
+                    transform: `translate3d(${lbl.x}px, ${lbl.y}px, 0) translate(-50%, -100%)`,
+                  }}
+                >
+                  <div
+                    className={`max-w-[215px] rounded-xl border px-2.5 py-1.5 shadow-md backdrop-blur-[2px] ${
+                      isHeat
+                        ? 'bg-[#FFFDF7]/95 border-orange-300 text-[#1A2B20]'
+                        : 'bg-[#F7FBFF]/95 border-sky-300 text-[#1A2B20]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-bold mb-0.5 whitespace-nowrap">
+                      <span className={isHeat ? 'text-orange-700' : 'text-sky-700'}>
+                        {isHeat ? '⛱️ 涼亭遮陽' : '☂️ 涼亭避雨'}
+                      </span>
+                      {lbl.subText && (
+                        <span className="text-emerald-700 font-mono-num">{lbl.subText}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-semibold leading-snug text-[#1A2B20]">
+                      {lbl.text}
+                    </p>
+                  </div>
+                  <div
+                    className={`w-2.5 h-2.5 -mt-1.5 rotate-45 border-r border-b ${
+                      isHeat
+                        ? 'bg-[#FFFDF7] border-orange-300'
+                        : 'bg-[#F7FBFF] border-sky-300'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </div>
+              );
+            }
+
             if (lbl.kind === 'visitor') {
               const dialogueColor =
                 lbl.moodTone === 'rose'
@@ -2917,6 +3055,18 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
                     transform: `translate3d(${lbl.x}px, ${lbl.y}px, 0) translate(-50%, -100%)`,
                   }}
                 >
+                  {lbl.weatherType && (
+                    <span
+                      className={`mb-0.5 px-2 py-0.5 rounded-md border text-[10px] font-bold whitespace-nowrap shadow-xs ${
+                        lbl.weatherType === 'heatwave'
+                          ? 'bg-orange-50/95 border-orange-300 text-orange-800'
+                          : 'bg-sky-50/95 border-sky-300 text-sky-800'
+                      }`}
+                    >
+                      {lbl.weatherType === 'heatwave' ? '⛱️ 涼亭遮陽' : '☂️ 涼亭避雨'}
+                      {lbl.subText ? ` · ${lbl.subText}` : ''}
+                    </span>
+                  )}
                   {lbl.dialogue && (
                     <span
                       className={`max-w-[200px] text-[11.5px] font-bold leading-snug text-center ${dialogueColor} [text-shadow:0_1px_3px_rgba(0,0,0,0.95),0_0_6px_rgba(0,0,0,0.75)]`}
@@ -3191,4 +3341,4 @@ export const ParkCanvas3D: React.FC<ParkCanvas3DProps> = ({
       )}
     </div>
   );
-};
+});

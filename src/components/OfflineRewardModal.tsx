@@ -23,7 +23,7 @@ export const OfflineRewardModal: React.FC<OfflineRewardModalProps> = ({ reward, 
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#1A2B20]/60 backdrop-blur-[2px] flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[#1A2B20]/65 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="offline-reward-title"

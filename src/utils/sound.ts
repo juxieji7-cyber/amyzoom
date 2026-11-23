@@ -74,6 +74,7 @@ class SoundManager {
   public thunderMode: AmbientAudioMode = 'auto';
   private isNight = false;
   private paused = false;
+  public pomodoroActive = false;
   private bgmPlaying = false;
   private bgmTimer: number | null = null;
   private bgmStep = 0;
@@ -223,7 +224,7 @@ class SoundManager {
     }
     const delayMs = 780 + Math.random() * 880;
     this.raindropTimer = window.setTimeout(() => {
-      if (!this.muted && !this.paused && this.isRainActive()) {
+      if (!this.muted && (!this.paused || this.pomodoroActive) && this.isRainActive()) {
         const c = this.ctx;
         if (c && c.state === 'running') {
           this.playRaindropPair(0);
@@ -340,7 +341,7 @@ class SoundManager {
       this.nextThunderAt = Date.now() + 1200;
       this.nextWindDriftAt = Date.now() + 4000;
       this.ambientTimer = window.setInterval(() => {
-        if (this.muted || this.paused) return;
+        if (this.muted || (this.paused && !this.pomodoroActive)) return;
         const c = this.ctx;
         if (!c || c.state !== 'running') return;
 
@@ -368,18 +369,21 @@ class SoundManager {
   }
 
   public isRainActive(): boolean {
+    if (this.pomodoroActive) return true;
     if (this.rainMode === 'on') return true;
     if (this.rainMode === 'off') return false;
     return this.weather === 'rainy';
   }
 
   public isWindActive(): boolean {
+    if (this.pomodoroActive) return true;
     if (this.windMode === 'on') return true;
     if (this.windMode === 'off') return false;
     return this.weather === 'breezy' || this.weather === 'rainy';
   }
 
   public isThunderActive(): boolean {
+    if (this.pomodoroActive) return false;
     if (this.thunderMode === 'on') return true;
     if (this.thunderMode === 'off') return false;
     return this.weather === 'rainy';
@@ -390,19 +394,24 @@ class SoundManager {
     if (!ctx || ctx.state !== 'running') return;
     this.ensureAmbientSoundscape();
     const now = ctx.currentTime;
-    const silent = this.muted || this.paused;
+    const silent = this.muted || (this.paused && !this.pomodoroActive);
 
     if (this.rainGainNode) {
-      // Smooth silky rainfall bed (0.032) paired with unhurried organic water droplets
-      const targetRain = silent || !this.isRainActive() ? 0.0001 : 0.032;
+      // Smooth silky rainfall bed (0.032 normal, 0.017 soft during Pomodoro) paired with unhurried water droplets
+      const rainVol = this.pomodoroActive ? 0.017 : 0.032;
+      const targetRain = silent || !this.isRainActive() ? 0.0001 : rainVol;
       this.rainGainNode.gain.setTargetAtTime(targetRain, now, 0.55);
     }
 
     if (this.windGainNode) {
-      // Gentle, quieter breeze volume (0.026 breezy/on, 0.013 light rain breeze)
+      // Gentle breeze volume (0.026 breezy/on, 0.013 light rain breeze, 0.012 soft during Pomodoro)
       let targetWind = 0.0001;
       if (!silent && this.isWindActive()) {
-        targetWind = this.windMode === 'on' || this.weather === 'breezy' ? 0.026 : 0.013;
+        targetWind = this.pomodoroActive
+          ? 0.012
+          : this.windMode === 'on' || this.weather === 'breezy'
+          ? 0.026
+          : 0.013;
       }
       this.windGainNode.gain.setTargetAtTime(targetWind, now, 0.75);
     }
@@ -459,12 +468,13 @@ class SoundManager {
    * Unhurried natural "滴⋯⋯答" water droplet motif with relaxed spacing
    */
   private playRaindropPair(delay = 0) {
+    const dropScale = this.pomodoroActive ? 0.58 : 1.0;
     const diFreq = 780 + Math.random() * 240;
     const daFreq = 580 + Math.random() * 190;
-    this.playRaindropTick(diFreq, 0.011 + Math.random() * 0.005, delay);
+    this.playRaindropTick(diFreq, (0.011 + Math.random() * 0.005) * dropScale, delay);
     if (Math.random() < 0.72) {
       const gap = 0.28 + Math.random() * 0.14;
-      this.playRaindropTick(daFreq, 0.012 + Math.random() * 0.005, delay + gap);
+      this.playRaindropTick(daFreq, (0.012 + Math.random() * 0.005) * dropScale, delay + gap);
     }
   }
 
@@ -472,6 +482,7 @@ class SoundManager {
    * Long sustained multi-echo rolling thunder (lasts ~6.5 seconds with overlapping swells)
    */
   playThunder(intensity = 0.85) {
+    if (this.pomodoroActive) return;
     const ctx = this.getContext();
     if (!ctx || ctx.state !== 'running') return;
     const now = ctx.currentTime;
@@ -1439,6 +1450,15 @@ class SoundManager {
     this.syncAmbientVolumes();
   }
 
+  setPomodoroActive(active: boolean) {
+    if (this.pomodoroActive === active) return;
+    this.pomodoroActive = active;
+    if (active) {
+      this.unlock();
+    }
+    this.syncAmbientVolumes();
+  }
+
   setMuted(muted: boolean) {
     this.muted = muted;
     this.syncAmbientVolumes();
@@ -1449,25 +1469,30 @@ class SoundManager {
   }
 
   playBuild() {
+    if (this.pomodoroActive) return;
     this.playTone(220, 0.09, 'triangle', 0.1);
     this.playTone(330, 0.12, 'triangle', 0.08, 0.05);
   }
 
   playCoin() {
+    if (this.pomodoroActive) return;
     this.playTone(880, 0.08, 'sine', 0.06);
     this.playTone(1318.5, 0.14, 'sine', 0.06, 0.06);
   }
 
   playCare() {
+    if (this.pomodoroActive) return;
     this.playTone(523.25, 0.1, 'sine', 0.08);
     this.playTone(659.25, 0.14, 'sine', 0.07, 0.07);
   }
 
   playError() {
+    if (this.pomodoroActive) return;
     this.playTone(180, 0.12, 'sawtooth', 0.05);
   }
 
   playMilestone() {
+    if (this.pomodoroActive) return;
     this.playTone(523.25, 0.12, 'triangle', 0.09, 0);
     this.playTone(659.25, 0.12, 'triangle', 0.09, 0.1);
     this.playTone(783.99, 0.16, 'triangle', 0.09, 0.2);
@@ -1475,11 +1500,13 @@ class SoundManager {
   }
 
   playDemolish() {
+    if (this.pomodoroActive) return;
     this.playTone(150, 0.1, 'square', 0.04);
     this.playTone(110, 0.14, 'square', 0.03, 0.05);
   }
 
   playShutter() {
+    if (this.pomodoroActive) return;
     this.playTone(1750, 0.028, 'square', 0.05, 0, 520);
     this.playTone(1120, 0.035, 'triangle', 0.045, 0.04, 340);
   }
@@ -1492,6 +1519,7 @@ class SoundManager {
     reaction: 'happy' | 'greet' | 'complaint' = 'happy',
     force = false
   ) {
+    if (this.pomodoroActive) return;
     const nowMs = Date.now();
     if (!force && nowMs - this.lastVisitorVoiceAt < 1100) return;
     this.lastVisitorVoiceAt = nowMs;

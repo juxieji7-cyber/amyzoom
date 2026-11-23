@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
-import { Play, Compass, HeartHandshake, Sparkles, FolderOpen, Clock } from 'lucide-react';
+import {
+  Play,
+  Compass,
+  HeartHandshake,
+  Sparkles,
+  FolderOpen,
+  Clock,
+  Heart,
+  RefreshCw,
+  CalendarHeart,
+} from 'lucide-react';
 import { TITLE_BANNER_IMAGE } from '../data/zooCatalog';
 import { DifficultyMode } from '../types/zoo';
 import { ZooSaveSlotSummary, formatSaveTimestamp } from '../utils/saveSystem';
@@ -11,6 +21,9 @@ interface TitleScreenProps {
   hasAnySave: boolean;
   onContinueLatestSave: () => void;
   onOpenSaveModal: () => void;
+  startupEncouragement: { text: string; isCustom: boolean };
+  onRefreshEncouragement: () => void;
+  onOpenPeriodTracker: () => void;
 }
 
 const MODES: Array<{
@@ -46,6 +59,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   hasAnySave,
   onContinueLatestSave,
   onOpenSaveModal,
+  startupEncouragement,
+  onRefreshEncouragement,
+  onOpenPeriodTracker,
 }) => {
   const [selectedMode, setSelectedMode] = useState<DifficultyMode>('standard');
   const [imgError, setImgError] = useState(false);
@@ -101,6 +117,43 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   <span>搭配輕食攤、長椅與觀景花圃提升好評，達成 4.8 星通關評價。</span>
                 </li>
               </ul>
+            </div>
+
+            <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 shrink-0" />
+                  <span className="text-xs font-bold text-rose-900 truncate">
+                    今日經期鼓勵
+                  </span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/90 border border-rose-200 text-rose-700 shrink-0">
+                    {startupEncouragement.isCustom ? '自訂語錄' : '暖心推薦'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={onRefreshEncouragement}
+                    title="隨機換一句鼓勵話語"
+                    className="px-2 py-1 rounded-md bg-white border border-rose-200 hover:bg-rose-100/70 text-[11px] font-semibold text-rose-800 flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>換一句</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onOpenPeriodTracker}
+                    title="開啟月經週期紀錄表並自訂話語"
+                    className="px-2 py-1 rounded-md bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <CalendarHeart className="w-3 h-3" />
+                    <span>週期表</span>
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs font-medium text-[#1A2B20] leading-relaxed">
+                「{startupEncouragement.text}」
+              </p>
             </div>
 
             {latestSave && (

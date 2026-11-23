@@ -231,6 +231,11 @@ export interface VisitorInstance {
   plannedDestination?: VisitorDestinationPlan | null;
   destinationSeekTicks?: number;
   guidedCooldownTicks?: number;
+  inPavilionZone?: boolean;
+  weatherShelterCooldownTicks?: number;
+  weatherComfortBubbleTicks?: number;
+  weatherComfortWeather?: 'rainy' | 'heatwave';
+  weatherComfortBoost?: number;
 }
 
 export type StaffRole = 'keeper' | 'cleaner';

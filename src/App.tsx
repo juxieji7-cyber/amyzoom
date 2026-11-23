@@ -3,6 +3,8 @@ import {
   ClipboardList,
   Compass,
   Hammer,
+  Heart,
+  RefreshCw,
   Sparkles,
   Timer,
   Utensils,
@@ -16,6 +18,7 @@ import {
   OfflineRewardSummary,
 } from './components/OfflineRewardModal';
 import { ParkCanvas3D } from './components/ParkCanvas3D';
+import { PeriodTrackerModal } from './components/PeriodTrackerModal';
 import {
   PomodoroMode,
   PomodoroPanel,
@@ -90,6 +93,14 @@ import {
   loadZooFromSlot,
   saveZooToSlot,
 } from './utils/saveSystem';
+import {
+  PeriodTrackerState,
+  computeCycleAnalysis,
+  getTodayDateStr,
+  loadPeriodTrackerState,
+  pickRandomDailyEncouragement,
+  savePeriodTrackerState,
+} from './utils/periodTracker';
 
 const TICKS_PER_DAY = 36;
 const POMODORO_STORAGE_KEY = 'forest_ark_pomodoro_v1';
@@ -608,6 +619,72 @@ function getWeatherBehaviorComfortBonus(
   return 0;
 }
 
+function findNearbyPavilion(
+  grid: ParkTile[][],
+  vx: number,
+  vy: number
+): { x: number; y: number } | null {
+  // Check 4 cardinal neighbors first, then diagonals so any path surrounding a pavilion counts as its shelter zone
+  const offsets: ReadonlyArray<readonly [number, number]> = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ];
+  for (const [dx, dy] of offsets) {
+    const nx = vx + dx;
+    const ny = vy + dy;
+    if (nx < 0 || nx >= GRID_COLS || ny < 0 || ny >= GRID_ROWS) continue;
+    if (grid[ny][nx].type === 'pavilion') {
+      return { x: nx, y: ny };
+    }
+  }
+  return null;
+}
+
+function pickPavilionWeatherComfortDialogue(
+  weather: 'heatwave' | 'rainy',
+  archetype: VisitorArchetype
+): string {
+  if (weather === 'heatwave') {
+    const archetypeLines: Partial<Record<VisitorArchetype, string[]>> = {
+      elder: ['走進涼亭遮陽納涼舒服多了，不用一直曬太陽真貼心！'],
+      child: ['耶！涼亭裡面好涼快，喘口氣再去看動物！'],
+      photographer: ['涼亭下吹風好涼爽，正好擦擦汗整理相機！'],
+    };
+    const specific = archetypeLines[archetype];
+    if (specific && Math.random() < 0.45) {
+      return pickRandomLine(specific);
+    }
+    return pickRandomLine([
+      '走進涼亭樹蔭下瞬間降溫，身體感覺舒適多了！',
+      '外面熱浪好曬，待在涼亭裡遮陽吹風真是太涼爽了！',
+      '這區配有觀景涼亭太讚了，暑氣一下子消散不少～',
+      '涼亭遮陽效果真好，清風陣陣吹來心情超愜意！',
+    ]);
+  }
+
+  const archetypeRainLines: Partial<Record<VisitorArchetype, string[]>> = {
+    elder: ['進到涼亭躲雨暖和又安全，真是太貼心的規劃了！'],
+    couple: ['一起在涼亭裡躲雨看動物，雨天氛圍突然變得好浪漫～'],
+    artist: ['在乾爽的涼亭裡避雨寫生，雨中園區景色好迷人！'],
+  };
+  const specific = archetypeRainLines[archetype];
+  if (specific && Math.random() < 0.45) {
+    return pickRandomLine(specific);
+  }
+  return pickRandomLine([
+    '外面下著雨，進到涼亭避雨感覺乾爽又舒適！',
+    '幸好這區設有涼亭可以躲雨，聽著雨聲賞景好放鬆～',
+    '不用淋雨真是太棒了，涼亭裡舒適又能看動物！',
+    '一走進涼亭區就避開細雨了，心情瞬間變得好愉快！',
+  ]);
+}
+
 function findOpenGrassPathTile(
   grid: ParkTile[][],
   visitors: VisitorInstance[]
@@ -679,6 +756,18 @@ function findOpenGrassPathTile(
   return { x: picked.x, y: picked.y };
 }
 
+const BFS_CELL_COUNT = GRID_COLS * GRID_ROWS;
+const _bfsVisitedStamp = new Uint32Array(BFS_CELL_COUNT);
+const _bfsQueue = new Int16Array(BFS_CELL_COUNT);
+const _bfsFirstStep = new Int16Array(BFS_CELL_COUNT);
+let _bfsStamp = 0;
+const _bfsDirs: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
 function getNextStepToward(
   grid: ParkTile[][],
   startX: number,
@@ -687,25 +776,65 @@ function getNextStepToward(
   goalY: number
 ): [number, number] | null {
   if (startX === goalX && startY === goalY) return null;
-  const queue: Array<{ x: number; y: number; firstStep: [number, number] | null }> = [
-    { x: startX, y: startY, firstStep: null },
-  ];
-  const visited = new Set<string>([`${startX},${startY}`]);
+  if (
+    startX < 0 ||
+    startX >= GRID_COLS ||
+    startY < 0 ||
+    startY >= GRID_ROWS ||
+    goalX < 0 ||
+    goalX >= GRID_COLS ||
+    goalY < 0 ||
+    goalY >= GRID_ROWS
+  ) {
+    return null;
+  }
 
-  while (queue.length > 0) {
-    const curr = queue.shift()!;
-    const neighbors = getWalkableNeighbors(grid, curr.x, curr.y).filter(
-      ([nx, ny]) => grid[ny][nx].connected
-    );
-    for (const [nx, ny] of neighbors) {
-      const key = `${nx},${ny}`;
-      if (visited.has(key)) continue;
-      visited.add(key);
-      const step: [number, number] = curr.firstStep ?? [nx, ny];
-      if (nx === goalX && ny === goalY) {
-        return step;
+  if (_bfsStamp === 0xffffffff) {
+    _bfsVisitedStamp.fill(0);
+    _bfsStamp = 0;
+  }
+  _bfsStamp += 1;
+  const stamp = _bfsStamp;
+
+  const startIdx = startY * GRID_COLS + startX;
+  const goalIdx = goalY * GRID_COLS + goalX;
+  _bfsVisitedStamp[startIdx] = stamp;
+
+  let head = 0;
+  let tail = 0;
+  _bfsQueue[tail] = startIdx;
+  _bfsFirstStep[tail] = -1;
+  tail += 1;
+
+  while (head < tail) {
+    const currIdx = _bfsQueue[head];
+    const currFirst = _bfsFirstStep[head];
+    head += 1;
+
+    const cx = currIdx % GRID_COLS;
+    const cy = (currIdx - cx) / GRID_COLS;
+
+    for (let i = 0; i < 4; i++) {
+      const nx = cx + _bfsDirs[i][0];
+      const ny = cy + _bfsDirs[i][1];
+      if (nx < 0 || nx >= GRID_COLS || ny < 0 || ny >= GRID_ROWS) continue;
+      const nTile = grid[ny][nx];
+      if (!nTile.connected || (nTile.type !== 'path' && nTile.type !== 'gate')) continue;
+
+      const nIdx = ny * GRID_COLS + nx;
+      if (_bfsVisitedStamp[nIdx] === stamp) continue;
+      _bfsVisitedStamp[nIdx] = stamp;
+
+      const first = currFirst >= 0 ? currFirst : nIdx;
+      if (nIdx === goalIdx) {
+        const fx = first % GRID_COLS;
+        const fy = (first - fx) / GRID_COLS;
+        return [fx, fy];
       }
-      queue.push({ x: nx, y: ny, firstStep: step });
+
+      _bfsQueue[tail] = nIdx;
+      _bfsFirstStep[tail] = first;
+      tail += 1;
     }
   }
 
@@ -1069,12 +1198,72 @@ export default function App() {
     initialPomoPrefs.autoStudyMusic
   );
   const [pomodoroModalOpen, setPomodoroModalOpen] = useState<boolean>(false);
+  const [periodTrackerModalOpen, setPeriodTrackerModalOpen] = useState<boolean>(false);
+  const [periodTrackerState, setPeriodTrackerState] = useState<PeriodTrackerState>(() =>
+    loadPeriodTrackerState()
+  );
   const [pomodoroBanner, setPomodoroBanner] = useState<{
     title: string;
     subtitle: string;
     nextMode: PomodoroMode;
   } | null>(null);
   const pomodoroEndAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    savePeriodTrackerState(periodTrackerState);
+  }, [periodTrackerState]);
+
+  const cycleAnalysis = useMemo(
+    () => computeCycleAnalysis(periodTrackerState),
+    [periodTrackerState]
+  );
+  const isTodayPeriod = Boolean(periodTrackerState.logs[getTodayDateStr()]?.isPeriodDay);
+
+  const [startupEncouragement, setStartupEncouragement] = useState<{
+    id: string;
+    text: string;
+    isCustom: boolean;
+  }>(() => {
+    const initial = loadPeriodTrackerState();
+    const initialPhase = computeCycleAnalysis(initial).currentPhase;
+    return pickRandomDailyEncouragement(initial, initialPhase);
+  });
+  const [startupBannerDismissed, setStartupBannerDismissed] = useState<boolean>(false);
+
+  const refreshStartupEncouragement = useCallback(() => {
+    setStartupEncouragement((prev) =>
+      pickRandomDailyEncouragement(periodTrackerState, cycleAnalysis.currentPhase, prev.text)
+    );
+  }, [periodTrackerState, cycleAnalysis.currentPhase]);
+
+  useEffect(() => {
+    const customList = periodTrackerState.customEncouragements;
+    if (customList.length > 0 && !startupEncouragement.isCustom) {
+      setStartupEncouragement(
+        pickRandomDailyEncouragement(periodTrackerState, cycleAnalysis.currentPhase)
+      );
+    } else if (
+      startupEncouragement.isCustom &&
+      !customList.some((c) => c.id === startupEncouragement.id)
+    ) {
+      setStartupEncouragement(
+        pickRandomDailyEncouragement(periodTrackerState, cycleAnalysis.currentPhase)
+      );
+    }
+  }, [
+    periodTrackerState,
+    cycleAnalysis.currentPhase,
+    startupEncouragement.id,
+    startupEncouragement.isCustom,
+  ]);
+
+  useEffect(() => {
+    if (gameState !== 'PLAYING' || startupBannerDismissed) return;
+    const timer = window.setTimeout(() => {
+      setStartupBannerDismissed(true);
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [gameState, startupBannerDismissed]);
 
   const refreshSaveSlots = useCallback(() => {
     setSaveSlots(listSaveSlots());
@@ -1914,6 +2103,42 @@ export default function App() {
           let hasBoughtSnack = v.hasBoughtSnack;
           let hasBoughtSouvenir = Boolean(v.hasBoughtSouvenir);
 
+          // 「應對天氣」系統：熱浪或雨天時進入配有涼亭的區域，自動產生舒適度對話氣泡並提升心情
+          let weatherShelterCooldownTicks = Math.max(0, (v.weatherShelterCooldownTicks ?? 0) - 1);
+          let weatherComfortBubbleTicks = Math.max(0, (v.weatherComfortBubbleTicks ?? 0) - 1);
+          let weatherComfortWeather: 'rainy' | 'heatwave' | undefined =
+            weatherComfortBubbleTicks > 0 ? v.weatherComfortWeather : undefined;
+          let weatherComfortBoost: number | undefined =
+            weatherComfortBubbleTicks > 0 ? v.weatherComfortBoost : undefined;
+
+          const isHarshWeather = s.weather === 'heatwave' || s.weather === 'rainy';
+          const nearbyPavilion = isHarshWeather ? findNearbyPavilion(nextGrid, vx, vy) : null;
+          const isInPavilionZone = Boolean(nearbyPavilion);
+          const enteredPavilionWeatherZone =
+            isHarshWeather &&
+            isInPavilionZone &&
+            !v.inPavilionZone &&
+            weatherShelterCooldownTicks <= 0;
+
+          if (enteredPavilionWeatherZone && (s.weather === 'heatwave' || s.weather === 'rainy')) {
+            const comfortMoodBoost = s.weather === 'heatwave' ? 10 : 9;
+            mood = Math.min(100, mood + comfortMoodBoost);
+            energy = Math.min(100, energy + 26);
+            thought = pickPavilionWeatherComfortDialogue(s.weather, v.archetype);
+            hasNewSpeech = true;
+            weatherComfortBubbleTicks = 6;
+            weatherComfortWeather = s.weather;
+            weatherComfortBoost = comfortMoodBoost;
+            weatherShelterCooldownTicks = 12;
+            if (isSelectedVisitor) {
+              soundFX.playVisitorVoice(v.archetype, 'happy');
+            }
+          } else if (isHarshWeather && isInPavilionZone) {
+            // Remaining under pavilion shelter offsets harsh weather mood drain & restores energy gently
+            energy = Math.min(100, energy + 8);
+            mood = Math.min(100, mood + 1.2);
+          }
+
           const adjDirs = [
             [1, 0],
             [-1, 0],
@@ -2025,19 +2250,12 @@ export default function App() {
               hasNewSpeech = true;
             } else if (
               adj.type === 'pavilion' &&
-              (energy < 70 || s.weather === 'rainy' || s.weather === 'heatwave')
+              !isHarshWeather &&
+              energy < 70
             ) {
               energy = Math.min(100, energy + 38);
-              mood = Math.min(
-                100,
-                mood + (s.weather === 'rainy' || s.weather === 'heatwave' ? 9 : 5)
-              );
-              thought =
-                s.weather === 'rainy'
-                  ? '在涼亭躲雨賞景好愜意！'
-                  : s.weather === 'heatwave'
-                  ? '涼亭遮陽好涼爽！'
-                  : '在觀景涼亭乘涼休息真舒服！';
+              mood = Math.min(100, mood + 5);
+              thought = '在觀景涼亭乘涼休息真舒服！';
               hasNewSpeech = true;
             } else if (adj.type === 'bench' && energy < 60) {
               energy = Math.min(100, energy + 28);
@@ -2064,7 +2282,10 @@ export default function App() {
           let nextThought = '';
           let nextThoughtTicks = 0;
 
-          if (isSelectedVisitor) {
+          if (enteredPavilionWeatherZone && hasNewSpeech) {
+            nextThought = thought;
+            nextThoughtTicks = 6;
+          } else if (isSelectedVisitor) {
             nextThought = v.thought;
             nextThoughtTicks = Math.max(0, (v.thoughtTicks ?? 0) - 1);
 
@@ -2126,6 +2347,9 @@ export default function App() {
               );
               nextThoughtTicks = 5;
             }
+          } else if (weatherComfortBubbleTicks > 0 && v.thought) {
+            nextThought = v.thought;
+            nextThoughtTicks = weatherComfortBubbleTicks;
           }
 
           let plannedDestination = v.plannedDestination ?? null;
@@ -2233,6 +2457,11 @@ export default function App() {
             plannedDestination,
             destinationSeekTicks,
             guidedCooldownTicks,
+            inPavilionZone: isInPavilionZone,
+            weatherShelterCooldownTicks,
+            weatherComfortBubbleTicks,
+            weatherComfortWeather,
+            weatherComfortBoost,
           };
         })
         .filter((v) => v.stayTicks > 0);
@@ -2796,6 +3025,20 @@ export default function App() {
     [activeTool, addLog, addPopup, day, funds, grid, landmarkUnlocked, selectedPos]
   );
 
+  const handleBuildAtRef = useRef(handleBuildAt);
+  handleBuildAtRef.current = handleBuildAt;
+
+  const handleCanvasTileClick = useCallback((x: number, y: number) => {
+    handleBuildAtRef.current(x, y, false);
+  }, []);
+
+  const handleCanvasTilePaintDrag = useCallback((x: number, y: number) => {
+    handleBuildAtRef.current(x, y, true);
+  }, []);
+
+  const handleEnterPhotoMode = useCallback(() => setPhotoMode(true), []);
+  const handleExitPhotoMode = useCallback(() => setPhotoMode(false), []);
+
   const handleFeedHabitat = useCallback(
     (x: number, y: number) => {
       if (funds < FACILITY_COSTS.feed) {
@@ -3157,7 +3400,9 @@ export default function App() {
       setVisitors((prev) =>
         prev.map((vis) => {
           if (vis.id !== visitorId) {
-            return vis.thought ? { ...vis, thought: '', thoughtTicks: 0 } : vis;
+            return vis.thought && (vis.weatherComfortBubbleTicks ?? 0) <= 0
+              ? { ...vis, thought: '', thoughtTicks: 0 }
+              : vis;
           }
           const s = simRef.current;
           const currIsNight = s.tickInDay >= 18;
@@ -3645,6 +3890,7 @@ export default function App() {
       const secs = pomodoroSecondsLeft > 0 ? pomodoroSecondsLeft : pomodoroTotalSeconds;
       setPomodoroSecondsLeft(secs);
       pomodoroEndAtRef.current = Date.now() + secs * 1000;
+      soundFX.setPomodoroActive(true);
       setPomodoroRunning(true);
     }
   }, [
@@ -3721,6 +3967,7 @@ export default function App() {
     setPomodoroMode(nextMode);
     setPomodoroSecondsLeft(secs);
     pomodoroEndAtRef.current = Date.now() + secs * 1000;
+    soundFX.setPomodoroActive(true);
     setPomodoroRunning(true);
   }, [
     ensureStudyMusicPlaying,
@@ -3733,12 +3980,13 @@ export default function App() {
   const selectedTile = selectedPos ? grid[selectedPos.y]?.[selectedPos.x] ?? null : null;
   const isNight = tickInDay >= 18;
 
-  // Sync Day/Night, Weather & Pause state with BGM & ambient nature audio engine
+  // Sync Day/Night, Weather, Pause & Pomodoro audio focus state with BGM & ambient nature audio engine
   useEffect(() => {
     soundFX.setNightMode(isNight);
     soundFX.setWeather(weather);
     soundFX.setPaused(gameState !== 'PLAYING' || speed === 0);
-  }, [isNight, weather, gameState, speed]);
+    soundFX.setPomodoroActive(gameState === 'PLAYING' && pomodoroRunning);
+  }, [isNight, weather, gameState, speed, pomodoroRunning]);
 
   // Ensure Web Audio unlocks cleanly on user interaction while playing
   useEffect(() => {
@@ -3757,7 +4005,7 @@ export default function App() {
 
   // Periodic gentle ambient animal calls across inhabited habitats (restrained frequency)
   useEffect(() => {
-    if (gameState !== 'PLAYING' || speed === 0) return;
+    if (gameState !== 'PLAYING' || (speed === 0 && !pomodoroRunning)) return;
     const intervalMs = speed === 2 ? 10000 : 13000;
     const timer = window.setInterval(() => {
       const s = simRef.current;
@@ -3780,7 +4028,7 @@ export default function App() {
     }, intervalMs);
 
     return () => window.clearInterval(timer);
-  }, [gameState, speed]);
+  }, [gameState, speed, pomodoroRunning]);
 
   // Auto-save when closing/leaving app & award offline income if resuming from background on a new day
   useEffect(() => {
@@ -3859,6 +4107,9 @@ export default function App() {
             refreshSaveSlots();
             setSaveModalOpen(true);
           }}
+          startupEncouragement={startupEncouragement}
+          onRefreshEncouragement={refreshStartupEncouragement}
+          onOpenPeriodTracker={() => setPeriodTrackerModalOpen(true)}
         />
         {saveModalOpen && (
           <SaveLoadModal
@@ -3868,6 +4119,14 @@ export default function App() {
             onSaveSlot={handleSaveSlot}
             onLoadSlot={handleLoadSlot}
             onDeleteSlot={handleDeleteSlot}
+          />
+        )}
+        {periodTrackerModalOpen && (
+          <PeriodTrackerModal
+            trackerState={periodTrackerState}
+            analysis={cycleAnalysis}
+            onUpdateState={setPeriodTrackerState}
+            onClose={() => setPeriodTrackerModalOpen(false)}
           />
         )}
       </>
@@ -3903,6 +4162,7 @@ export default function App() {
           dayProgress={(tickInDay / TICKS_PER_DAY) * 100}
           isNight={isNight}
           weather={weather}
+          nextWeather={nextWeather}
           weatherDaysLeft={weatherDaysLeft}
           seasonalEvent={seasonalEvent}
           seasonalDaysLeft={seasonalDaysLeft}
@@ -3916,6 +4176,8 @@ export default function App() {
           pomodoroMode={pomodoroMode}
           pomodoroRunning={pomodoroRunning}
           pomodoroSecondsLeft={pomodoroSecondsLeft}
+          periodDaysUntilNext={cycleAnalysis.daysUntilNextPeriod}
+          isTodayPeriod={isTodayPeriod}
           onOpenPomodoro={() => {
             if (window.innerWidth < 1024) {
               setMobileTab('pomodoro');
@@ -3923,6 +4185,7 @@ export default function App() {
               setPomodoroModalOpen(true);
             }
           }}
+          onOpenPeriodTracker={() => setPeriodTrackerModalOpen(true)}
           onChangeSpeed={setSpeed}
           onToggleMute={handleToggleMute}
           onToggleBgm={handleToggleBgm}
@@ -3998,11 +4261,11 @@ export default function App() {
               popups={popups}
               pendingPhotoCaptures={pendingPhotoCaptures}
               onPhotoCaptured={handlePhotoCaptured}
-              onTileClick={(x, y) => handleBuildAt(x, y, false)}
-              onTilePaintDrag={(x, y) => handleBuildAt(x, y, true)}
+              onTileClick={handleCanvasTileClick}
+              onTilePaintDrag={handleCanvasTilePaintDrag}
               onSelectVisitor={handleSelectVisitor}
-              onEnterPhotoMode={() => setPhotoMode(true)}
-              onExitPhotoMode={() => setPhotoMode(false)}
+              onEnterPhotoMode={handleEnterPhotoMode}
+              onExitPhotoMode={handleExitPhotoMode}
             />
           </div>
 
@@ -4273,7 +4536,7 @@ export default function App() {
       {!photoMode && (
         <nav
           aria-label="手機版主選單"
-          className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-[#E2DDD3] grid grid-cols-4 pb-safe shadow-[0_-4px_16px_rgba(26,43,32,0.06)]"
+          className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 border-t border-[#E2DDD3] grid grid-cols-4 pb-safe shadow-[0_-4px_16px_rgba(26,43,32,0.06)]"
         >
           <button
             type="button"
@@ -4354,6 +4617,70 @@ export default function App() {
           onToggleAutoStudyMusic={() => setPomodoroAutoStudyMusic((v) => !v)}
           onToggleBgm={handleToggleBgm}
           onChangeBgmTrack={handleChangeBgmTrack}
+        />
+      )}
+
+      {!startupBannerDismissed && !photoMode && !pomodoroBanner && !offlineReward && (
+        <div
+          className="fixed bottom-20 lg:bottom-5 right-3 left-3 sm:left-auto sm:w-96 z-40 bg-white border border-rose-200 rounded-2xl p-3.5 shadow-xl flex flex-col gap-2"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center shrink-0">
+                <Heart className="w-4 h-4 text-rose-500 fill-rose-500" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-rose-900">今日經期鼓勵</p>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700">
+                    {startupEncouragement.isCustom ? '自訂語錄' : '暖心推薦'}
+                  </span>
+                </div>
+                <p className="text-xs font-medium text-[#1A2B20] mt-1 leading-relaxed">
+                  「{startupEncouragement.text}」
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStartupBannerDismissed(true)}
+              aria-label="關閉今日鼓勵"
+              className="min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg hover:bg-[#F4F2EC] text-[#5B6D60] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={refreshStartupEncouragement}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#E2DDD3] bg-[#FAF9F5] hover:bg-[#F1EFE7] text-[11px] font-semibold text-[#4A5D50] flex items-center gap-1 cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>換一句</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setStartupBannerDismissed(true);
+                setPeriodTrackerModalOpen(true);
+              }}
+              className="min-h-[32px] px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold cursor-pointer"
+            >
+              自訂話語 / 週期表
+            </button>
+          </div>
+        </div>
+      )}
+
+      {periodTrackerModalOpen && (
+        <PeriodTrackerModal
+          trackerState={periodTrackerState}
+          analysis={cycleAnalysis}
+          onUpdateState={setPeriodTrackerState}
+          onClose={() => setPeriodTrackerModalOpen(false)}
         />
       )}
 

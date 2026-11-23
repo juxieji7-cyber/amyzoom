@@ -27,7 +27,7 @@ export const EndGameModal: React.FC<EndGameModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#1A2B20]/60 backdrop-blur-[2px] flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[#1A2B20]/65 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="endgame-title"

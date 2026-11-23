@@ -124,7 +124,6 @@ function addFurTuftCards(
     card.position.set(p.x, p.y, p.z);
     card.scale.set(p.w, p.h, 1);
     card.rotation.set(p.rx ?? 0, p.ry ?? 0, p.rz ?? 0);
-    card.castShadow = true;
     parent.add(card);
   }
 }

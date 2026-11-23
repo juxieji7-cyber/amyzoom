@@ -57,15 +57,16 @@ export function getStdMat(
 let glassWallMat: THREE.MeshPhysicalMaterial | null = null;
 function getGlassBarrierMat(): THREE.MeshPhysicalMaterial {
   if (glassWallMat) return glassWallMat;
+  // Avoid `transmission > 0` which triggers an expensive full-scene second render pass every frame
   glassWallMat = new THREE.MeshPhysicalMaterial({
     color: '#DFF2F8',
-    roughness: 0.06,
-    metalness: 0.05,
-    transmission: 0.72,
+    roughness: 0.08,
+    metalness: 0.14,
     transparent: true,
     opacity: 0.34,
     clearcoat: 0.9,
     clearcoatRoughness: 0.05,
+    envMapIntensity: 1.65,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
@@ -135,7 +136,7 @@ export function buildSurroundingEnvironment(maxAnisotropy = 4): THREE.Group {
   env.add(continuousGrass);
 
   // Rolling distant botanical hills
-  const hillGeo = new THREE.SphereGeometry(1, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  const hillGeo = new THREE.SphereGeometry(1, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);
   const hillMat = getStdMat('#4D7A40', 0.94, 0.0);
   const hillConfigs = [
     [-31, -25, 13, 3.6, 9],
@@ -173,7 +174,7 @@ export function buildSurroundingEnvironment(maxAnisotropy = 4): THREE.Group {
   };
 
   // --- Exterior Wildflower Patches on Meadow Grass ---
-  const flowerCount = 520;
+  const flowerCount = 360;
   const stemGeo = new THREE.CylinderGeometry(0.008, 0.011, 0.14, 5);
   stemGeo.translate(0, 0.07, 0);
   const stemMat = getStdMat('#3D7A36', 0.85, 0.0);
@@ -606,9 +607,9 @@ export function build3DGrassField(): GrassFieldHandle {
   };
 
   // Scatter tufts across playable park area + soft border apron
-  const tuftsPerTile = 44;
+  const tuftsPerTile = 32;
   const parkTuftsCount = GRID_COLS * GRID_ROWS * tuftsPerTile;
-  const borderTuftsCount = 540;
+  const borderTuftsCount = 400;
   const totalCount = parkTuftsCount + borderTuftsCount;
 
   const mesh = new THREE.InstancedMesh(tuftGeo, grassMat, totalCount);
@@ -2590,7 +2591,6 @@ export function buildHabitatVegetationLayer(
       );
       blade.rotation.z = Math.cos(ang) * 0.28;
       blade.rotation.x = Math.sin(ang) * 0.28;
-      blade.castShadow = true;
       group.add(blade);
     }
   }

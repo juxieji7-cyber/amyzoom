@@ -160,8 +160,8 @@
 }
 
 .heat-mirage-refraction {
-  backdrop-filter: blur(0.65px) contrast(1.04) saturate(1.08);
-  -webkit-backdrop-filter: blur(0.65px) contrast(1.04) saturate(1.08);
+  will-change: transform, opacity;
+  mix-blend-mode: screen;
 }
 
 .animate-breezy-drift {
@@ -177,10 +177,6 @@
   animation-play-state: paused !important;
 }
 
-.weather-heat-filter {
-  filter: url(#zoo-heat-distortion);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .animate-float-popup,
   .animate-weather-rain,
@@ -192,9 +188,6 @@
   .animate-breezy-drift,
   .animate-sun-breathe {
     animation: none;
-  }
-  .weather-heat-filter {
-    filter: none;
   }
   *, *::before, *::after {
     transition-duration: 0.01ms !important;

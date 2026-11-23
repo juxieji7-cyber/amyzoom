@@ -79,14 +79,24 @@ export interface ZooSaveSlotSummary {
 
 type SaveStoreMap = Partial<Record<SaveSlotId, ZooSavePayload>>;
 
+let memoryStoreCache: SaveStoreMap | null = null;
+
 function readStoreMap(): SaveStoreMap {
+  if (memoryStoreCache) return memoryStoreCache;
   if (typeof window === 'undefined' || !window.localStorage) return {};
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
+    if (!raw) {
+      memoryStoreCache = {};
+      return memoryStoreCache;
+    }
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed as SaveStoreMap;
+    if (!parsed || typeof parsed !== 'object') {
+      memoryStoreCache = {};
+      return memoryStoreCache;
+    }
+    memoryStoreCache = parsed as SaveStoreMap;
+    return memoryStoreCache;
   } catch {
     return {};
   }
@@ -96,6 +106,7 @@ function writeStoreMap(map: SaveStoreMap): boolean {
   if (typeof window === 'undefined' || !window.localStorage) return false;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+    memoryStoreCache = map;
     return true;
   } catch {
     return false;
@@ -145,7 +156,7 @@ export function saveZooToSlot(
   slotId: SaveSlotId,
   payload: Omit<ZooSavePayload, 'version' | 'slotId' | 'savedAt'>
 ): boolean {
-  const store = readStoreMap();
+  const store: SaveStoreMap = { ...readStoreMap() };
   const cappedPhotos = Array.isArray(payload.photoAlbum) ? payload.photoAlbum.slice(0, 28) : [];
   const record: ZooSavePayload = {
     ...payload,
@@ -192,7 +203,7 @@ export function loadZooFromSlot(slotId: SaveSlotId): ZooSavePayload | null {
 }
 
 export function deleteSaveSlot(slotId: SaveSlotId): void {
-  const store = readStoreMap();
+  const store: SaveStoreMap = { ...readStoreMap() };
   delete store[slotId];
   writeStoreMap(store);
 }

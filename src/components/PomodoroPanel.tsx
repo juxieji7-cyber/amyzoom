@@ -331,6 +331,12 @@ export const PomodoroPanel: React.FC<PomodoroPanelProps> = ({
           </button>
         </div>
 
+        <p className="text-[11px] text-[#5B6D60] leading-relaxed">
+          {isRunning
+            ? '專注模式音效已啟用：已關閉買票與系統提示音，保留動物叫聲並持續播放輕柔雨聲與風聲。'
+            : '開始計時後將自動關閉買票與系統提示音，只留動物叫聲與輕柔雨聲、風聲陪伴專注。'}
+        </p>
+
         <button
           type="button"
           onClick={onToggleAutoStudyMusic}
@@ -386,7 +392,7 @@ export const PomodoroPanel: React.FC<PomodoroPanelProps> = ({
   if (variant === 'modal') {
     return (
       <div
-        className="fixed inset-0 z-50 bg-black/45 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4 overflow-y-auto"
         role="dialog"
         aria-modal="true"
         aria-label="園區番茄鐘"

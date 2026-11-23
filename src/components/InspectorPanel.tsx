@@ -958,6 +958,22 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <span>正前往空曠草地步道準備夜間觀星</span>
               </div>
             ) : null}
+            {selectedVisitor.inPavilionZone && (weather === 'heatwave' || weather === 'rainy') && (
+              <div
+                className={`px-2.5 py-1.5 rounded-lg border font-semibold flex items-center gap-1.5 ${
+                  weather === 'heatwave'
+                    ? 'bg-orange-50 border-orange-200 text-orange-800'
+                    : 'bg-sky-50 border-sky-200 text-sky-800'
+                }`}
+              >
+                <span>{weather === 'heatwave' ? '⛱️' : '☂️'}</span>
+                <span>
+                  {weather === 'heatwave'
+                    ? '應對熱浪：正在涼亭區域遮陽納涼（舒適度與心情提升中）'
+                    : '應對雨天：正在涼亭區域避雨賞景（舒適度與心情提升中）'}
+                </span>
+              </div>
+            )}
             <span className="text-[#5B6D60] block">此刻想法</span>
             <p className="text-[#1A2B20] font-medium bg-white border border-[#E2DDD3] rounded-lg px-2.5 py-2">
               「
@@ -1570,6 +1586,19 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </span>
             </div>
           </div>
+          {(weather === 'heatwave' || weather === 'rainy') && (
+            <div
+              className={`rounded-lg border px-2.5 py-1.5 text-[11px] leading-snug ${
+                weather === 'heatwave'
+                  ? 'bg-orange-50/80 border-orange-200 text-orange-900'
+                  : 'bg-sky-50/80 border-sky-200 text-sky-900'
+              }`}
+            >
+              <span className="font-bold">應對天氣系統生效中：</span>
+              遊客進入配有「觀景涼亭」的區域時，將自動觸發舒適度對話氣泡並提升當下心情（+
+              {weather === 'heatwave' ? '10' : '9'}%）。
+            </div>
+          )}
         </div>
       </div>
 

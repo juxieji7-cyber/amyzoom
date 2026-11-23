@@ -83,7 +83,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#1A2B20]/45 backdrop-blur-xs flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[#1A2B20]/55 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="園區存檔與讀檔管理"
